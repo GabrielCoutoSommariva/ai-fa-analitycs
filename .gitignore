@@ -1,0 +1,60 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.prod.example
+!.env.sample
+
+# Database dumps and backups
+dump/
+dump.zip
+*.dump
+*.backup
+*.bak
+dump-vendas.sql
+*.sql.gz
+*.sql.zip
+
+# Generated deployment packages
+deploy/
+*.zip
+*.tar
+*.tar.gz
+
+# Frontend dependencies/build
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Logs and runtime files
+logs/
+*.log
+*.pid
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local validation/output artifacts
+*.tmp
+*.local
+validacao-restauracao-dbeaver.md
+app/deploy-*.md
+bi/validation-results.md
+
+# Local opencode configuration/skills
+.opencode/
