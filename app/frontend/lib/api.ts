@@ -1,5 +1,6 @@
 import type {
   AiRoute,
+  AuthState,
   CouponRow,
   DailyRevenue,
   DateFilters,
@@ -16,7 +17,7 @@ import type {
 const API_BASE = "/api"
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" })
+  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store", credentials: "same-origin" })
   if (!response.ok) throw new Error(`Erro ${response.status}`)
   return response.json()
 }
@@ -33,6 +34,13 @@ function query(filters: DateFilters, extra: Record<string, string | number | und
 }
 
 export const api = {
+  createSession: (token: string) => getJson<AuthState>(`/auth/session?token=${encodeURIComponent(token)}`),
+  me: () => getJson<AuthState>("/auth/me"),
+  logout: async () => {
+    const response = await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "same-origin" })
+    if (!response.ok) throw new Error(`Erro ${response.status}`)
+    return response.json() as Promise<AuthState>
+  },
   salesPeriod: () => getJson<SalesPeriod>("/metrics/periodo-vendas"),
   lojasCnpj: () => getJson<LojaCnpj[]>("/metrics/lojas-cnpj"),
   summary: (filters: DateFilters) => getJson<Summary>(`/metrics/summary?${query(filters)}`),
@@ -54,6 +62,7 @@ export const api = {
     const response = await fetch(`${API_BASE}/ai/question`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify({
         question,
         data_inicio: filters.dataInicio || null,

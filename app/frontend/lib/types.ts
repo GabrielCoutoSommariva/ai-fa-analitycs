@@ -11,6 +11,29 @@ export type LojaCnpj = {
   lojas_vinculadas: Array<{ loja_id: number; loja: string }>
 }
 
+export type SessionStore = {
+  nomeFantasia: string
+  cnpj: string
+  acode: string
+}
+
+export type SessionUser = {
+  id: string
+  name: string
+  email: string
+  username: string
+  type: string
+  stores: SessionStore[]
+  allowed_cnpjs: string[]
+}
+
+export type AuthState = {
+  auth_enabled: boolean
+  authenticated: boolean
+  login_url?: string | null
+  user?: SessionUser | null
+}
+
 export type SalesPeriod = {
   data_inicio: string | null
   data_fim: string | null

@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { AiChat } from "@/components/AiChat"
 import { AppShell, type DashboardSection } from "@/components/AppShell"
@@ -15,7 +15,7 @@ import { KpiCard } from "@/components/KpiCard"
 import { ItemsPerCouponChart, MarginHero, ProductProfitChart, RevenueTrendChart, StoreRankingChart, StoreScatterChart } from "@/components/charts"
 import { api } from "@/lib/api"
 import { compactMoney, compactNumber, money, number, percent } from "@/lib/format"
-import type { CouponRow, DailyRevenue, DateFilters, ItemsSoldRow, MonthlyRevenue, ProductProfit, StoreRevenue } from "@/lib/types"
+import type { AuthState, CouponRow, DailyRevenue, DateFilters, ItemsSoldRow, MonthlyRevenue, ProductProfit, StoreRevenue } from "@/lib/types"
 
 const defaultFilters: DateFilters = {
   dataInicio: "2026-05-01",
@@ -26,26 +26,82 @@ const defaultFilters: DateFilters = {
 export default function Home() {
   const [filters, setFilters] = useState(defaultFilters)
   const [activeSection, setActiveSection] = useState<DashboardSection>("overview")
+  const [authState, setAuthState] = useState<AuthState | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const isOverview = activeSection === "overview"
   const isSales = activeSection === "sales"
   const isStores = activeSection === "stores"
   const isProducts = activeSection === "products"
   const isMargin = activeSection === "margin"
+  const canLoadMetrics = authChecked && !authError
 
-  const summary = useQuery({ queryKey: ["summary", filters], queryFn: () => api.summary(filters) })
-  const daily = useQuery({ queryKey: ["dailyRevenue", filters], queryFn: () => api.dailyRevenue(filters), enabled: isOverview || isSales })
-  const monthly = useQuery({ queryKey: ["monthlyRevenue", filters], queryFn: () => api.monthlyRevenue(filters), enabled: isSales })
-  const coupons = useQuery({ queryKey: ["coupons", filters], queryFn: () => api.coupons(filters), enabled: isSales })
-  const itemsSold = useQuery({ queryKey: ["itemsSold", filters], queryFn: () => api.itemsSold(filters), enabled: isSales })
-  const stores = useQuery({ queryKey: ["storeRevenue", filters], queryFn: () => api.storeRevenue(filters), enabled: isOverview || isStores })
-  const mostProfitable = useQuery({ queryKey: ["productProfit", filters, "desc"], queryFn: () => api.productProfit(filters, "desc"), enabled: isProducts || isMargin })
-  const leastProfitable = useQuery({ queryKey: ["productProfit", filters, "asc"], queryFn: () => api.productProfit(filters, "asc"), enabled: isMargin })
-  const losses = useQuery({ queryKey: ["productLosses", filters], queryFn: () => api.productLosses(filters), enabled: isOverview || isProducts || isMargin })
+  useEffect(() => {
+    let cancelled = false
+
+    async function initializeSession() {
+      try {
+        const url = new URL(window.location.href)
+        const token = url.searchParams.get("token")
+        const session = token ? await api.createSession(token) : await api.me()
+
+        if (cancelled) return
+        if (token) {
+          url.searchParams.delete("token")
+          window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`)
+        }
+
+        if (session.auth_enabled && !session.authenticated) {
+          if (session.login_url) {
+            window.location.href = session.login_url
+            return
+          }
+          setAuthError("Sessao invalida ou expirada.")
+        }
+        setAuthState(session)
+      } catch {
+        if (!cancelled) setAuthError("Nao foi possivel validar o acesso.")
+      } finally {
+        if (!cancelled) setAuthChecked(true)
+      }
+    }
+
+    initializeSession()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authState?.user?.allowed_cnpjs.length || !filters.cnpj) return
+    const selected = filters.cnpj.replace(/\D/g, "")
+    if (selected && !authState.user.allowed_cnpjs.includes(selected)) {
+      setFilters({ ...filters, cnpj: "" })
+    }
+  }, [authState, filters])
+
+  const summary = useQuery({ queryKey: ["summary", filters], queryFn: () => api.summary(filters), enabled: canLoadMetrics })
+  const daily = useQuery({ queryKey: ["dailyRevenue", filters], queryFn: () => api.dailyRevenue(filters), enabled: canLoadMetrics && (isOverview || isSales) })
+  const monthly = useQuery({ queryKey: ["monthlyRevenue", filters], queryFn: () => api.monthlyRevenue(filters), enabled: canLoadMetrics && isSales })
+  const coupons = useQuery({ queryKey: ["coupons", filters], queryFn: () => api.coupons(filters), enabled: canLoadMetrics && isSales })
+  const itemsSold = useQuery({ queryKey: ["itemsSold", filters], queryFn: () => api.itemsSold(filters), enabled: canLoadMetrics && isSales })
+  const stores = useQuery({ queryKey: ["storeRevenue", filters], queryFn: () => api.storeRevenue(filters), enabled: canLoadMetrics && (isOverview || isStores) })
+  const mostProfitable = useQuery({ queryKey: ["productProfit", filters, "desc"], queryFn: () => api.productProfit(filters, "desc"), enabled: canLoadMetrics && (isProducts || isMargin) })
+  const leastProfitable = useQuery({ queryKey: ["productProfit", filters, "asc"], queryFn: () => api.productProfit(filters, "asc"), enabled: canLoadMetrics && isMargin })
+  const losses = useQuery({ queryKey: ["productLosses", filters], queryFn: () => api.productLosses(filters), enabled: canLoadMetrics && (isOverview || isProducts || isMargin) })
 
   const queries = [summary, daily, monthly, coupons, itemsSold, stores, mostProfitable, leastProfitable, losses]
   const isLoading = queries.some((query) => query.isFetching)
   const error = queries.find((query) => query.error)?.error
+
+  if (!authChecked) {
+    return <div className="status-screen">Validando acesso...</div>
+  }
+
+  if (authError) {
+    return <div className="status-screen status-screen--error">{authError}</div>
+  }
 
   const dailyColumns: ColumnDef<DailyRevenue>[] = [
     { accessorKey: "data", header: "Data" },
@@ -210,7 +266,7 @@ export default function Home() {
           </div>
         </header>
 
-        <FilterBar filters={filters} setFilters={setFilters} isLoading={isLoading} onRefresh={() => queryClient.invalidateQueries()} />
+        <FilterBar filters={filters} setFilters={setFilters} isLoading={isLoading} onRefresh={() => queryClient.invalidateQueries()} authorizedStores={authState?.user?.stores} />
         {error && <div className="error-banner"><AlertTriangle size={16} /> {error instanceof Error ? error.message : "Erro ao carregar dados"}</div>}
 
         <section className="kpi-grid">
