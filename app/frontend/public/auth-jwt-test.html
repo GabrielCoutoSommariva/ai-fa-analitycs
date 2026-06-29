@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Teste de Auth JWT - Farmacias BI</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4fbfa;
+        --card: #ffffff;
+        --ink: #073b43;
+        --muted: #5f7480;
+        --line: #cfe8e5;
+        --teal: #0f9f94;
+        --orange: #ff6b00;
+        --danger: #b42318;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        background: radial-gradient(circle at top left, #dff8f4, transparent 32rem), var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        padding: 32px;
+      }
+
+      main {
+        margin: 0 auto;
+        max-width: 1120px;
+      }
+
+      h1 {
+        font-size: clamp(28px, 4vw, 44px);
+        letter-spacing: -0.04em;
+        margin: 0 0 8px;
+      }
+
+      p {
+        color: var(--muted);
+        line-height: 1.55;
+        margin: 0;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+        margin-top: 28px;
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: 0 24px 70px rgba(3, 58, 68, 0.08);
+        padding: 22px;
+      }
+
+      label {
+        color: var(--muted);
+        display: grid;
+        font-size: 13px;
+        font-weight: 700;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      input,
+      textarea {
+        background: #fbfffe;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        color: var(--ink);
+        font: inherit;
+        outline: none;
+        padding: 12px 14px;
+        width: 100%;
+      }
+
+      textarea {
+        min-height: 170px;
+        resize: vertical;
+      }
+
+      input:focus,
+      textarea:focus {
+        border-color: var(--teal);
+        box-shadow: 0 0 0 4px rgba(15, 159, 148, 0.12);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      button {
+        align-items: center;
+        background: var(--teal);
+        border: 0;
+        border-radius: 999px;
+        color: white;
+        cursor: pointer;
+        display: inline-flex;
+        font-weight: 800;
+        gap: 8px;
+        padding: 12px 16px;
+      }
+
+      button.secondary {
+        background: #e3f5f2;
+        color: var(--ink);
+      }
+
+      button.warning {
+        background: var(--orange);
+      }
+
+      .status {
+        border-radius: 14px;
+        font-weight: 800;
+        margin-top: 18px;
+        padding: 12px 14px;
+      }
+
+      .status.ok {
+        background: #e8fbf7;
+        color: #04756d;
+      }
+
+      .status.error {
+        background: #fff0ed;
+        color: var(--danger);
+      }
+
+      .summary {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 16px;
+      }
+
+      .pill {
+        background: #f3faf9;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px;
+      }
+
+      .pill strong {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+
+      pre {
+        background: #082f36;
+        border-radius: 18px;
+        color: #e9fffb;
+        font-size: 13px;
+        line-height: 1.5;
+        max-height: 620px;
+        overflow: auto;
+        padding: 18px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .hint {
+        background: #fff8f0;
+        border: 1px solid #ffd5b3;
+        border-radius: 16px;
+        color: #8a3a00;
+        margin-top: 16px;
+        padding: 12px 14px;
+      }
+
+      @media (max-width: 860px) {
+        body {
+          padding: 18px;
+        }
+
+        .grid,
+        .summary {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Teste de login por JWT</h1>
+        <p>Use esta pagina para validar o fluxo <code>?token=</code>, criacao de sessao HTTP-only, retorno de usuario e CNPJs autorizados.</p>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <label>
+            API base
+            <input id="apiBase" value="/api" autocomplete="off" />
+          </label>
+
+          <label>
+            JWT externo
+            <textarea id="token" placeholder="Cole aqui o JWT recebido pela aplicacao externa"></textarea>
+          </label>
+
+          <div class="actions">
+            <button id="createSession">Criar sessao</button>
+            <button id="checkSession" class="secondary">Validar sessao</button>
+            <button id="decodeToken" class="secondary">Decodificar payload</button>
+            <button id="logout" class="warning">Logout</button>
+          </div>
+
+          <div class="hint">O cookie de sessao e HTTP-only. O navegador nao consegue ler o cookie via JavaScript; a validacao correta e chamar <code>/auth/me</code>.</div>
+          <div id="status" class="status">Aguardando teste.</div>
+
+          <div class="summary">
+            <div class="pill"><strong>Auth ativa</strong><span id="authEnabled">-</span></div>
+            <div class="pill"><strong>Autenticado</strong><span id="authenticated">-</span></div>
+            <div class="pill"><strong>Usuario</strong><span id="username">-</span></div>
+            <div class="pill"><strong>CNPJs autorizados</strong><span id="cnpjs">-</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <p>Resposta / payload</p>
+          <pre id="output">{}</pre>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const apiBase = document.getElementById("apiBase")
+      const token = document.getElementById("token")
+      const output = document.getElementById("output")
+      const statusBox = document.getElementById("status")
+      const authEnabled = document.getElementById("authEnabled")
+      const authenticated = document.getElementById("authenticated")
+      const username = document.getElementById("username")
+      const cnpjs = document.getElementById("cnpjs")
+
+      function setStatus(message, ok) {
+        statusBox.textContent = message
+        statusBox.className = "status " + (ok ? "ok" : "error")
+      }
+
+      function show(value) {
+        output.textContent = JSON.stringify(value, null, 2)
+        const user = value && value.user
+        authEnabled.textContent = String(value && value.auth_enabled)
+        authenticated.textContent = String(value && value.authenticated)
+        username.textContent = user ? user.username || user.name || "-" : "-"
+        cnpjs.textContent = user && Array.isArray(user.allowed_cnpjs) ? user.allowed_cnpjs.join(", ") : "-"
+      }
+
+      async function request(path, options) {
+        const response = await fetch(apiBase.value.replace(/\/$/, "") + path, {
+          credentials: "same-origin",
+          ...options
+        })
+        const text = await response.text()
+        let body
+        try {
+          body = text ? JSON.parse(text) : {}
+        } catch {
+          body = { raw: text }
+        }
+        show(body)
+        if (!response.ok) throw new Error("HTTP " + response.status)
+        return body
+      }
+
+      function decodePayload(rawToken) {
+        const parts = rawToken.split(".")
+        if (parts.length !== 3) throw new Error("JWT precisa ter 3 partes")
+        const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/")
+        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4)
+        return JSON.parse(decodeURIComponent(escape(atob(padded))))
+      }
+
+      document.getElementById("createSession").addEventListener("click", async () => {
+        try {
+          const rawToken = token.value.trim()
+          if (!rawToken) throw new Error("Cole um token primeiro")
+          await request("/auth/session?token=" + encodeURIComponent(rawToken))
+          setStatus("Sessao criada com sucesso.", true)
+        } catch (error) {
+          setStatus(error.message || "Erro ao criar sessao.", false)
+        }
+      })
+
+      document.getElementById("checkSession").addEventListener("click", async () => {
+        try {
+          await request("/auth/me")
+          setStatus("Sessao consultada.", true)
+        } catch (error) {
+          setStatus(error.message || "Erro ao validar sessao.", false)
+        }
+      })
+
+      document.getElementById("logout").addEventListener("click", async () => {
+        try {
+          await request("/auth/logout", { method: "POST" })
+          setStatus("Logout realizado.", true)
+        } catch (error) {
+          setStatus(error.message || "Erro no logout.", false)
+        }
+      })
+
+      document.getElementById("decodeToken").addEventListener("click", () => {
+        try {
+          const payload = decodePayload(token.value.trim())
+          show({ decoded_payload: payload })
+          setStatus("Payload decodificado localmente. Assinatura nao validada pelo navegador.", true)
+        } catch (error) {
+          setStatus(error.message || "Erro ao decodificar token.", false)
+        }
+      })
+    </script>
+  </body>
+</html>
