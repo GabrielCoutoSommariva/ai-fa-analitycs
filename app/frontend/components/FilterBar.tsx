@@ -58,6 +58,9 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
   const selectedDigits = filters.cnpj.replace(/\D/g, "")
   const selectedCnpj = cnpjOptions.find((item) => item.cnpj_digits === selectedDigits || item.cnpj === filters.cnpj)
   const selectedOption = storeOptions.find((item) => item.key === selectedOptionKey && item.cnpjDigits === selectedDigits) ?? storeOptions.find((item) => item.cnpjDigits === selectedDigits)
+  const totalStores = storeOptions.length || cnpjOptions.reduce((total, item) => total + Number(item.lojas || 0), 0)
+  const selectedStoreCount = selectedOption?.linkedStores ?? Number(selectedCnpj?.lojas || 0)
+  const storeCountLabel = selectedDigits && selectedStoreCount ? `${selectedStoreCount} loja(s) vinculada(s)` : `${totalStores} loja(s) disponível(is)`
   const fullStart = salesPeriod.data?.data_inicio ?? ""
   const fullEnd = salesPeriod.data?.data_fim ?? ""
   const isFullPeriod = Boolean(fullStart && fullEnd && filters.dataInicio === fullStart && filters.dataFim === fullEnd)
@@ -93,6 +96,7 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
       </label>
       <div className="filter-field cnpj-picker-field" ref={cnpjPickerRef}>
         <span className="filter-label">CNPJ da loja</span>
+        <span className="filter-hint cnpj-count">{storeCountLabel}</span>
         <button
           className={`cnpj-trigger ${isCnpjOpen ? "is-open" : ""}`}
           type="button"
@@ -138,7 +142,6 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
             ))}
           </div>
         )}
-        {selectedCnpj && <span className="filter-hint">{selectedCnpj.lojas} loja(s) vinculada(s)</span>}
       </div>
       <Button className="filter-clear" variant="ghost" onClick={() => setFilters({ ...filters, dataInicio: fullStart, dataFim: fullEnd })} disabled={!isMounted || !fullStart || !fullEnd || isFullPeriod}>
         Período completo
