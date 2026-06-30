@@ -279,12 +279,12 @@ export default function Home() {
         {error && <div className="error-banner"><AlertTriangle size={16} /> {error instanceof Error ? error.message : "Erro ao carregar dados"}</div>}
 
         <section className="kpi-grid">
-          <KpiCard label="Faturamento" value={compactMoney(summary.data?.faturamento)} note="ajustado" tone="success" />
+          <KpiCard label="Faturamento" value={compactMoney(summary.data?.faturamento)} />
           <KpiCard label="Cupons" value={compactNumber(summary.data?.cupons, 0)} />
           <KpiCard label="Ticket médio" value={money(summary.data?.ticket_medio)} />
           <KpiCard label="Itens vendidos" value={compactNumber(summary.data?.itens, 0)} />
-          <KpiCard label="Lucro bruto" value={compactMoney(summary.data?.lucro)} note="estimado" tone="warning" />
-          <KpiCard label="Margem" value={percent(summary.data?.margem)} note="estimada" tone="warning" />
+          <KpiCard label="Lucro bruto" value={compactMoney(summary.data?.lucro)} />
+          <KpiCard label="Margem" value={percent(summary.data?.margem)} />
         </section>
 
         {sections[activeSection]}
