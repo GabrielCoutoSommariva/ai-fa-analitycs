@@ -1,5 +1,7 @@
 "use client"
 
+import { useState } from "react"
+
 import {
   Area,
   AreaChart,
@@ -48,13 +50,20 @@ function shortLabel(value: string, max = 24) {
 type StoreRankingPoint = {
   loja: string
   lojaAxis: string
+  lojaId: number | string
+  lojaTick: string
   faturamento: number
   cupons: number
   ticket: number
 }
 
-function StoreRankingTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: StoreRankingPoint }> }) {
-  const row = payload?.[0]?.payload
+function storeTickLabel(name: string, lojaId: number | string) {
+  const suffix = name.includes(" - ") ? name.split(" - ").pop() || name : name
+  return shortLabel(`${suffix} #${lojaId}`, 24)
+}
+
+function StoreRankingTooltip({ active, payload, activeStore }: { active?: boolean; payload?: Array<{ payload?: StoreRankingPoint }>; activeStore?: StoreRankingPoint | null }) {
+  const row = activeStore ?? payload?.[0]?.payload
   if (!active || !row) return null
 
   return (
@@ -92,9 +101,12 @@ export function RevenueTrendChart({ data }: { data: DailyRevenue[] }) {
 }
 
 export function StoreRankingChart({ data }: { data: StoreRevenue[] }) {
+  const [activeStore, setActiveStore] = useState<StoreRankingPoint | null>(null)
   const chartData = data.map((row) => ({
     loja: row.loja,
     lojaAxis: `${row.loja} #${row.loja_id}`,
+    lojaId: row.loja_id,
+    lojaTick: storeTickLabel(row.loja, row.loja_id),
     faturamento: Number(row.faturamento_liquido ?? 0),
     cupons: Number(row.qtd_cupons ?? 0),
     ticket: Number(row.faturamento_liquido ?? 0) / Math.max(Number(row.qtd_cupons ?? 0), 1)
@@ -107,9 +119,13 @@ export function StoreRankingChart({ data }: { data: StoreRevenue[] }) {
           <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 28 }} barCategoryGap={8}>
             <CartesianGrid stroke={colors.grid} horizontal={false} />
             <XAxis type="number" tickFormatter={axisMoney} tick={{ fill: colors.muted, fontSize: 12 }} />
-            <YAxis type="category" dataKey="lojaAxis" width={170} tickFormatter={(value) => shortLabel(String(value).replace(/ #\d+$/, ""), 28)} tick={{ fill: colors.muted, fontSize: 11 }} />
-            <Tooltip content={<StoreRankingTooltip />} cursor={{ fill: "rgba(24, 184, 168, 0.08)" }} wrapperStyle={{ outline: "none", pointerEvents: "none" }} />
-            <Bar dataKey="faturamento" fill={colors.blue} radius={[0, 10, 10, 0]} activeBar={{ fill: colors.warning }} />
+            <YAxis type="category" dataKey="lojaAxis" width={170} tickFormatter={(_, index) => chartData[index]?.lojaTick ?? ""} tick={{ fill: colors.muted, fontSize: 11 }} />
+            <Tooltip shared={false} content={<StoreRankingTooltip activeStore={activeStore} />} cursor={{ fill: "rgba(24, 184, 168, 0.08)" }} wrapperStyle={{ outline: "none", pointerEvents: "none" }} />
+            <Bar dataKey="faturamento" fill={colors.blue} radius={[0, 10, 10, 0]} activeBar={{ fill: colors.warning }} onMouseLeave={() => setActiveStore(null)}>
+              {chartData.map((entry) => (
+                <Cell key={entry.lojaAxis} fill={activeStore?.lojaAxis === entry.lojaAxis ? colors.warning : colors.blue} onMouseEnter={() => setActiveStore(entry)} />
+              ))}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
