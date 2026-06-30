@@ -544,6 +544,30 @@ input:focus, textarea:focus {
   background: linear-gradient(180deg, rgba(24, 184, 168, 0.72), rgba(255, 106, 0, 0.62));
 }
 
+.chart-tooltip {
+  background: #ffffff;
+  border: 1px solid rgba(7, 17, 31, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(7, 17, 31, 0.14);
+  color: #07111f;
+  display: grid;
+  gap: 5px;
+  max-width: min(320px, 74vw);
+  padding: 12px 14px;
+}
+
+.chart-tooltip strong {
+  color: #223653;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.chart-tooltip span {
+  color: #0f9f92;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .drill-panel {
   overflow: hidden;
 }

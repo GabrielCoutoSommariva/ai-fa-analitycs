@@ -132,6 +132,14 @@ export default function Home() {
     return <div className="status-screen status-screen--error">{authError}</div>
   }
 
+  if (salesPeriod.isError) {
+    return <div className="status-screen status-screen--error">Não foi possível carregar o período atualizado do banco.</div>
+  }
+
+  if (!filters.dataInicio || !filters.dataFim) {
+    return <div className="status-screen">Carregando período atualizado...</div>
+  }
+
   const dailyColumns: ColumnDef<DailyRevenue>[] = [
     { accessorKey: "data", header: "Data" },
     { accessorKey: "loja_id", header: "Loja" },

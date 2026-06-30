@@ -45,6 +45,28 @@ function shortLabel(value: string, max = 24) {
   return value.length > max ? `${value.slice(0, max - 1)}...` : value
 }
 
+type StoreRankingPoint = {
+  loja: string
+  lojaLabel: string
+  faturamento: number
+  cupons: number
+  ticket: number
+}
+
+function StoreRankingTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: StoreRankingPoint }> }) {
+  const row = payload?.[0]?.payload
+  if (!active || !row) return null
+
+  return (
+    <div className="chart-tooltip">
+      <strong>{row.loja}</strong>
+      <span>Faturamento: {money(row.faturamento)}</span>
+      <span>Cupons: {number(row.cupons, 0)}</span>
+      <span>Ticket médio: {money(row.ticket)}</span>
+    </div>
+  )
+}
+
 export function RevenueTrendChart({ data }: { data: DailyRevenue[] }) {
   const grouped = Object.values(data.reduce<Record<string, { data: string; faturamento: number; cupons: number }>>((acc, row) => {
     const key = row.data
@@ -74,19 +96,20 @@ export function StoreRankingChart({ data }: { data: StoreRevenue[] }) {
     loja: row.loja,
     lojaLabel: shortLabel(`${row.loja} #${row.loja_id}`, 28),
     faturamento: Number(row.faturamento_liquido ?? 0),
-    cupons: Number(row.qtd_cupons ?? 0)
+    cupons: Number(row.qtd_cupons ?? 0),
+    ticket: Number(row.faturamento_liquido ?? 0) / Math.max(Number(row.qtd_cupons ?? 0), 1)
   }))
   const height = Math.max(360, chartData.length * 34 + 46)
   return (
     <div className="chart-scroll">
       <div style={{ height }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 20 }}>
+          <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 28 }} barCategoryGap={8}>
             <CartesianGrid stroke={colors.grid} horizontal={false} />
             <XAxis type="number" tickFormatter={axisMoney} tick={{ fill: colors.muted, fontSize: 12 }} />
             <YAxis type="category" dataKey="lojaLabel" width={170} tick={{ fill: colors.muted, fontSize: 11 }} />
-            <Tooltip cursor={false} contentStyle={tooltipStyle} formatter={(value) => money(value as number)} labelFormatter={(_, payload) => payload?.[0]?.payload?.loja ?? ""} />
-            <Bar dataKey="faturamento" fill={colors.blue} radius={[0, 10, 10, 0]} />
+            <Tooltip content={<StoreRankingTooltip />} cursor={{ fill: "rgba(24, 184, 168, 0.08)" }} wrapperStyle={{ outline: "none", pointerEvents: "none" }} />
+            <Bar dataKey="faturamento" fill={colors.blue} radius={[0, 10, 10, 0]} activeBar={{ fill: colors.warning }} />
           </BarChart>
         </ResponsiveContainer>
       </div>
