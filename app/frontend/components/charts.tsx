@@ -47,7 +47,7 @@ function shortLabel(value: string, max = 24) {
 
 type StoreRankingPoint = {
   loja: string
-  lojaLabel: string
+  lojaAxis: string
   faturamento: number
   cupons: number
   ticket: number
@@ -94,7 +94,7 @@ export function RevenueTrendChart({ data }: { data: DailyRevenue[] }) {
 export function StoreRankingChart({ data }: { data: StoreRevenue[] }) {
   const chartData = data.map((row) => ({
     loja: row.loja,
-    lojaLabel: shortLabel(`${row.loja} #${row.loja_id}`, 28),
+    lojaAxis: `${row.loja} #${row.loja_id}`,
     faturamento: Number(row.faturamento_liquido ?? 0),
     cupons: Number(row.qtd_cupons ?? 0),
     ticket: Number(row.faturamento_liquido ?? 0) / Math.max(Number(row.qtd_cupons ?? 0), 1)
@@ -107,7 +107,7 @@ export function StoreRankingChart({ data }: { data: StoreRevenue[] }) {
           <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 28 }} barCategoryGap={8}>
             <CartesianGrid stroke={colors.grid} horizontal={false} />
             <XAxis type="number" tickFormatter={axisMoney} tick={{ fill: colors.muted, fontSize: 12 }} />
-            <YAxis type="category" dataKey="lojaLabel" width={170} tick={{ fill: colors.muted, fontSize: 11 }} />
+            <YAxis type="category" dataKey="lojaAxis" width={170} tickFormatter={(value) => shortLabel(String(value).replace(/ #\d+$/, ""), 28)} tick={{ fill: colors.muted, fontSize: 11 }} />
             <Tooltip content={<StoreRankingTooltip />} cursor={{ fill: "rgba(24, 184, 168, 0.08)" }} wrapperStyle={{ outline: "none", pointerEvents: "none" }} />
             <Bar dataKey="faturamento" fill={colors.blue} radius={[0, 10, 10, 0]} activeBar={{ fill: colors.warning }} />
           </BarChart>
