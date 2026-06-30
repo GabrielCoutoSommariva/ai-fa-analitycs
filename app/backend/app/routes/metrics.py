@@ -151,3 +151,28 @@ def produtos_descontos_devolucoes(
     user = current_user(request)
     scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
     return service.produtos_descontos_devolucoes(data_inicio, data_fim, scoped_cnpj, order, limit, scoped_cnpjs)
+
+
+@router.get("/sazonalidade-dia-semana")
+def sazonalidade_dia_semana(
+    request: Request,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    cnpj: str | None = None,
+) -> list[dict]:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.sazonalidade_dia_semana(data_inicio, data_fim, scoped_cnpj, scoped_cnpjs)
+
+
+@router.get("/vendas-horario")
+def vendas_horario(
+    request: Request,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    cnpj: str | None = None,
+    limit: int = Query(24, ge=1, le=24),
+) -> list[dict]:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.vendas_horario(data_inicio, data_fim, scoped_cnpj, limit, scoped_cnpjs)

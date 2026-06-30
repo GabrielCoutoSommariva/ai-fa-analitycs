@@ -395,3 +395,52 @@ def produtos_descontos_devolucoes(
         """,
         params,
     )
+
+
+def sazonalidade_dia_semana(data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+    return fetch_all(
+        f"""
+        select
+          dia_semana,
+          max(nome_dia_semana) as nome_dia_semana,
+          count(distinct data) as dias_analisados,
+          sum(qtd_cupons) as qtd_cupons,
+          sum(faturamento_liquido) as faturamento_liquido,
+          case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio
+        from analytics.mv_ai_sazonalidade_dia_semana
+        {where}
+        group by dia_semana
+        order by faturamento_liquido desc
+        """,
+        params,
+    )
+
+
+def vendas_horario(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+    params["limit"] = max(1, min(limit or 24, 24))
+    return fetch_all(
+        f"""
+        select
+          hora,
+          max(faixa_horaria) as faixa_horaria,
+          count(distinct data) as dias_analisados,
+          sum(qtd_cupons) as qtd_cupons,
+          sum(faturamento_liquido) as faturamento_liquido,
+          case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio,
+          sum(valor_devolucao) as valor_devolucao
+        from analytics.mv_ai_vendas_horario
+        {where}
+        group by hora
+        order by faturamento_liquido desc
+        limit %(limit)s
+        """,
+        params,
+    )

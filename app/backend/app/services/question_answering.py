@@ -222,6 +222,19 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     order by faturamento desc
     limit 10
     """
+    seasonality_sql = f"""
+    select
+      dia_semana,
+      max(nome_dia_semana) as nome_dia_semana,
+      count(distinct data) as dias_analisados,
+      sum(faturamento_liquido) as faturamento,
+      sum(qtd_cupons) as cupons,
+      case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio
+    from analytics.mv_ai_sazonalidade_dia_semana
+    where data between %(data_inicio)s and %(data_fim)s {loja_filter}
+    group by dia_semana
+    order by faturamento desc
+    """
     alerts_sql = f"""
     select
       tipo_alerta,
@@ -396,6 +409,7 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
         "tendencia_diaria": execute_select(trend_sql, params),
         "ranking_vendedores": execute_optional_select(sellers_sql, params),
         "vendas_por_horario": execute_optional_select(hourly_sql, params),
+        "sazonalidade_dia_semana": execute_optional_select(seasonality_sql, params),
         "alertas_operacionais": execute_optional_select(alerts_sql, params),
         "clientes": (execute_optional_select(customers_sql, params) or [{}])[0],
         "clientes_vip": execute_optional_select(vip_customers_sql, params),
@@ -411,6 +425,7 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
             "vendedor usa itens da venda e pode diferir do atendente do cabecalho",
             "clientes dependem de cliente_id preenchido na venda",
             "curva ABC de produtos e tendencias usam meses dentro do periodo selecionado",
+            "sazonalidade por dia da semana usa vendas agrupadas por data e loja",
             "descontos e devolucoes usam campos do cabecalho e dos itens de venda disponiveis no banco",
             "use o periodo selecionado como referencia quando a pergunta for vaga",
         ],
@@ -509,6 +524,28 @@ def is_hour_question(question: str) -> bool:
     return any(word in normalized for word in hour_words) and any(word in normalized for word in movement_words)
 
 
+def is_seasonality_question(question: str) -> bool:
+    normalized = question.lower()
+    day_words = [
+        "dia da semana",
+        "dias da semana",
+        "semana",
+        "segunda",
+        "terca",
+        "terça",
+        "quarta",
+        "quinta",
+        "sexta",
+        "sabado",
+        "sábado",
+        "domingo",
+        "sazonalidade",
+    ]
+    metric_words = ["vende", "vendeu", "vendas", "faturamento", "cupons", "ticket", "melhor", "pior", "movimento"]
+    product_words = ["produto", "produtos", "sku", "item", "itens"]
+    return any(word in normalized for word in day_words) and any(word in normalized for word in metric_words) and not any(word in normalized for word in product_words)
+
+
 def is_alert_question(question: str) -> bool:
     normalized = question.lower()
     alert_words = ["alerta", "alertas", "problema", "problemas", "risco", "riscos", "atenção", "atencao", "queda", "priorizar", "prioridade", "anomalia"]
@@ -530,6 +567,62 @@ def is_discount_return_question(question: str) -> bool:
         "estornos",
     ]
     return any(word in normalized for word in words)
+
+
+def answer_seasonality(question: str, data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para analisar sazonalidade por dia da semana, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": "sazonalidade_dia_semana"},
+            "params": serialize(params),
+        }
+
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      dia_semana,
+      max(nome_dia_semana) as nome_dia_semana,
+      count(distinct data) as dias_analisados,
+      sum(qtd_cupons) as cupons,
+      sum(faturamento_liquido) as faturamento,
+      case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio
+    from analytics.mv_ai_sazonalidade_dia_semana
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    group by dia_semana
+    order by faturamento desc
+    """
+    rows = [serialize(row) for row in execute_optional_select(sql, params)]
+    if not rows:
+        answer = "Nao encontrei sazonalidade por dia da semana para o periodo selecionado."
+    else:
+        best = rows[0]
+        worst = rows[-1]
+        parts = [f"{row.get('nome_dia_semana')}: {format_brl(row.get('faturamento'))}" for row in rows[:5]]
+        answer = (
+            f"O melhor dia da semana foi {best.get('nome_dia_semana')}, com {format_brl(best.get('faturamento'))} "
+            f"e ticket medio de {format_brl(best.get('ticket_medio'))}. "
+            f"O dia mais fraco foi {worst.get('nome_dia_semana')}, com {format_brl(worst.get('faturamento'))}. "
+            "Top dias: " + "; ".join(parts) + "."
+        )
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "consultative_matched", "intent": "sazonalidade_dia_semana"},
+        "params": serialize(params),
+        "sql": sql,
+    }
 
 
 def is_customer_question(question: str) -> bool:
@@ -1395,6 +1488,9 @@ def answer_question(
 
     if is_hour_question(question):
         return answer_hour_performance(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_seasonality_question(question):
+        return answer_seasonality(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
 
     if is_alert_question(question):
         return answer_alerts(question, data_inicio, data_fim, cnpj, authorized_cnpjs)

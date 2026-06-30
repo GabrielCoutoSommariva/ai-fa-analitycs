@@ -107,6 +107,7 @@ Se faltar dado no pacote de KPIs, diga objetivamente o que falta.
 Se a pergunta pedir faturamento por mes, mensal, mes a mes ou cada mes, use o campo faturamento_mensal do pacote de KPIs.
 Se a pergunta pedir vendedores/equipe, use ranking_vendedores.
 Se a pergunta pedir horarios/faixas de movimento, use vendas_por_horario.
+Se a pergunta pedir dia da semana, melhor dia, pior dia ou sazonalidade semanal, use sazonalidade_dia_semana.
 Se a pergunta pedir problemas, riscos ou prioridades, use alertas_operacionais e executivo.
 Se a pergunta pedir clientes, recorrencia, VIP, inativos ou LTV, use clientes e clientes_vip.
 Se a pergunta pedir curva ABC, produtos lideres, crescimento, queda ou sazonalidade, use produtos_estrategicos e tendencias_produtos.
