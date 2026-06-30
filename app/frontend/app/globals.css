@@ -173,12 +173,110 @@ p { color: var(--muted); margin: 0; }
   margin-bottom: 18px;
 }
 
-label {
+label, .filter-field {
   display: grid;
   min-width: 170px;
   gap: 7px;
   color: var(--muted);
   font-size: 12px;
+  font-weight: 700;
+}
+
+.filter-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cnpj-picker-field {
+  min-width: min(420px, 100%);
+  position: relative;
+}
+
+.cnpj-trigger {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.cnpj-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cnpj-trigger svg {
+  color: var(--muted);
+  flex: 0 0 auto;
+  transition: transform 0.16s ease;
+}
+
+.cnpj-trigger:hover, .cnpj-trigger.is-open {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgba(255, 106, 0, 0.10);
+}
+
+.cnpj-trigger.is-open svg {
+  transform: rotate(180deg);
+}
+
+.cnpj-options {
+  background: #ffffff;
+  border: 1px solid rgba(7, 17, 31, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 22px 64px rgba(7, 17, 31, 0.18);
+  display: grid;
+  gap: 2px;
+  left: 0;
+  max-height: 360px;
+  min-width: 100%;
+  overflow-y: auto;
+  padding: 8px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 70;
+}
+
+.cnpj-options button {
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: #15233b;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.cnpj-options button:hover, .cnpj-options button.active {
+  background: rgba(255, 106, 0, 0.14);
+  color: var(--accent-2);
+}
+
+.cnpj-options strong {
+  font-size: 14px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cnpj-options span {
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 700;
 }
 
