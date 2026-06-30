@@ -176,6 +176,7 @@ docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farm
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/02_kpi_views.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/03_semantic_catalog.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/05_materialized_kpis.sql
+docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/06_ai_kpis.sql
 ```
 
 ## Subir Aplicacao

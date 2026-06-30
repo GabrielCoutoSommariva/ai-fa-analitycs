@@ -152,7 +152,7 @@ export function MarginHero({ summary }: { summary?: Summary }) {
   const custo = Number(summary?.custo ?? 0)
   const data = [
     { name: "Receita PDV", value: receita },
-    { name: "Custo compra", value: custo },
+    { name: "Custo de compra", value: custo },
     { name: "Lucro bruto", value: lucro },
   ]
   return (
@@ -160,7 +160,7 @@ export function MarginHero({ summary }: { summary?: Summary }) {
       <div>
         <span>Margem bruta estimada</span>
         <strong>{percent(margem)}</strong>
-        <p>Receita PDV - custo compra = {money(lucro)}</p>
+        <p>Receita PDV - custo de compra = {money(lucro)}</p>
       </div>
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data}>

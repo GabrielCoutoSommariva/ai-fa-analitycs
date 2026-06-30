@@ -2,7 +2,7 @@ import "./globals.css"
 import { Providers } from "./providers"
 
 export const metadata = {
-  title: "Inteligencia da Farmacia",
+  title: "Inteligência da Farmácia",
   description: "BI modular com contexto para IA"
 }
 

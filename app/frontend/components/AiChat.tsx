@@ -15,10 +15,10 @@ type Message = {
 }
 
 const suggestions = [
-  "Quanto vendi no periodo?",
+  "Quanto vendi no período?",
   "Qual loja vendeu mais?",
-  "Quais produtos venderam com prejuizo?",
-  "Qual foi o ticket medio?"
+  "Quais produtos venderam com prejuízo?",
+  "Qual foi o ticket médio?"
 ]
 
 function renderInline(text: string) {
@@ -54,7 +54,7 @@ export function AiChat({ filters }: { filters: DateFilters }) {
   const [isOpen, setIsOpen] = useState(false)
   const [question, setQuestion] = useState("")
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Oi, sou o assistente BI. Pergunte sobre faturamento, lojas, ticket medio, margem ou produtos. Vou usar o periodo filtrado no dashboard." }
+    { role: "assistant", content: "Oi, sou o assistente BI. Pergunte sobre faturamento, lojas, ticket médio, margem ou produtos. Vou usar o período filtrado no dashboard." }
   ])
   const [isLoading, setIsLoading] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
@@ -76,7 +76,7 @@ export function AiChat({ filters }: { filters: DateFilters }) {
         .slice(-12)
         .map((message) => ({ role: message.role, content: message.content }))
       const route = await api.ask(clean, filters, history)
-      const content = route.answer ?? (route.status === "answered" ? "Pergunta respondida." : route.message ?? "Nao consegui responder.")
+      const content = route.answer ?? (route.status === "answered" ? "Pergunta respondida." : route.message ?? "Não consegui responder.")
       setMessages((current) => [...current, { role: "assistant", content }])
     } catch (error) {
       setMessages((current) => [...current, { role: "assistant", content: error instanceof Error ? error.message : "Erro ao analisar pergunta." }])
@@ -118,7 +118,7 @@ export function AiChat({ filters }: { filters: DateFilters }) {
     <section className="chat-panel" aria-label="Chat BI com IA">
       <div className="chat-panel__header">
         <div>
-          <h2>Chat farmacia</h2>
+          <h2>Chat farmácia</h2>
         </div>
         <div className="chat-panel__actions">
           <button className="chat-close" onClick={() => setIsOpen(false)} aria-label="Fechar chat"><X size={18} /></button>
@@ -141,7 +141,7 @@ export function AiChat({ filters }: { filters: DateFilters }) {
         {isLoading && (
           <div className="message message--assistant">
             <div className="avatar"><Bot size={16} /></div>
-            <div className="bubble bubble--typing" aria-label="Chat farmacia digitando">
+            <div className="bubble bubble--typing" aria-label="Chat farmácia digitando">
               <span></span>
               <span></span>
               <span></span>

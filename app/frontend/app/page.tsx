@@ -57,11 +57,20 @@ export default function Home() {
             window.location.href = session.login_url
             return
           }
-          setAuthError("Sessao invalida ou expirada.")
+          setAuthError("Sessão inválida ou expirada.")
         }
         setAuthState(session)
       } catch {
-        if (!cancelled) setAuthError("Nao foi possivel validar o acesso.")
+        try {
+          const session = await api.me()
+          if (!cancelled && session.auth_enabled && session.login_url) {
+            window.location.href = session.login_url
+            return
+          }
+        } catch {
+          // Keep the local error below if the auth service itself is unavailable.
+        }
+        if (!cancelled) setAuthError("Não foi possível validar o acesso.")
       } finally {
         if (!cancelled) setAuthChecked(true)
       }
@@ -108,22 +117,22 @@ export default function Home() {
     { accessorKey: "loja_id", header: "Loja" },
     { accessorKey: "qtd_cupons", header: "Cupons", cell: ({ row }) => number(row.original.qtd_cupons, 0) },
     { accessorKey: "faturamento_liquido", header: "Faturamento", cell: ({ row }) => money(row.original.faturamento_liquido) },
-    { accessorKey: "valor_devolucao", header: "Devolucao", cell: ({ row }) => money(row.original.valor_devolucao) }
+    { accessorKey: "valor_devolucao", header: "Devolução", cell: ({ row }) => money(row.original.valor_devolucao) }
   ]
 
   const monthlyColumns: ColumnDef<MonthlyRevenue>[] = [
-    { accessorKey: "mes", header: "Mes" },
+    { accessorKey: "mes", header: "Mês" },
     { accessorKey: "loja_id", header: "Loja" },
     { accessorKey: "qtd_cupons", header: "Cupons", cell: ({ row }) => number(row.original.qtd_cupons, 0) },
     { accessorKey: "faturamento_liquido", header: "Faturamento", cell: ({ row }) => money(row.original.faturamento_liquido) },
-    { accessorKey: "faturamento_servico", header: "Servicos", cell: ({ row }) => money(row.original.faturamento_servico) }
+    { accessorKey: "faturamento_servico", header: "Serviços", cell: ({ row }) => money(row.original.faturamento_servico) }
   ]
 
   const couponColumns: ColumnDef<CouponRow>[] = [
     { accessorKey: "data", header: "Data" },
     { accessorKey: "loja_id", header: "Loja" },
     { accessorKey: "qtd_cupons", header: "Cupons", cell: ({ row }) => number(row.original.qtd_cupons, 0) },
-    { accessorKey: "nro_venda_distintos", header: "Nros venda", cell: ({ row }) => number(row.original.nro_venda_distintos, 0) },
+    { accessorKey: "nro_venda_distintos", header: "Nºs de venda", cell: ({ row }) => number(row.original.nro_venda_distintos, 0) },
     { accessorKey: "tickets_distintos", header: "Tickets", cell: ({ row }) => number(row.original.tickets_distintos, 0) }
   ]
 
@@ -155,16 +164,16 @@ export default function Home() {
 
   const overview = (
     <div className="visual-grid">
-      <ChartPanel title="Faturamento e cupons" subtitle="Evolucao diaria do periodo selecionado" isLoading={daily.isFetching}>
+      <ChartPanel title="Faturamento e cupons" subtitle="Evolução diária do período selecionado" isLoading={daily.isFetching}>
         <RevenueTrendChart data={daily.data ?? []} />
       </ChartPanel>
-      <ChartPanel title="Faturamento por loja" subtitle="Todas as lojas no periodo" isLoading={stores.isFetching}>
+      <ChartPanel title="Faturamento por loja" subtitle="Todas as lojas no período" isLoading={stores.isFetching}>
         <StoreRankingChart data={stores.data ?? []} />
       </ChartPanel>
-      <ChartPanel title="Produtos em prejuizo" subtitle="Maiores perdas estimadas" badge="estimado" isLoading={losses.isFetching}>
+      <ChartPanel title="Produtos em prejuízo" subtitle="Maiores perdas estimadas" badge="estimado" isLoading={losses.isFetching}>
         <ProductProfitChart data={losses.data ?? []} mode="loss" />
       </ChartPanel>
-      <ChartPanel title="Margem bruta" subtitle="Preco de compra + preco de venda + vendas PDV" badge="estimada" isLoading={summary.isFetching}>
+      <ChartPanel title="Margem bruta" subtitle="Preço de compra + preço de venda + vendas PDV" badge="estimada" isLoading={summary.isFetching}>
         <MarginHero summary={summary.data} />
       </ChartPanel>
     </div>
@@ -173,16 +182,16 @@ export default function Home() {
   const sales = (
     <div className="stack">
       <div className="visual-grid visual-grid--wide">
-        <ChartPanel title="Faturamento diario" subtitle="Linha de faturamento e barras de cupons" isLoading={daily.isFetching}>
+        <ChartPanel title="Faturamento diário" subtitle="Linha de faturamento e barras de cupons" isLoading={daily.isFetching}>
           <RevenueTrendChart data={daily.data ?? []} />
         </ChartPanel>
-        <ChartPanel title="Itens por cupom" subtitle="Qualidade do cupom medio no periodo" isLoading={itemsSold.isFetching}>
+        <ChartPanel title="Itens por cupom" subtitle="Qualidade do cupom médio no período" isLoading={itemsSold.isFetching}>
           <ItemsPerCouponChart data={itemsSold.data ?? []} />
         </ChartPanel>
       </div>
-      <DrillDownPanel title="Ver dados de vendas" subtitle="Faturamento diario, mensal, cupons e itens">
+      <DrillDownPanel title="Ver dados de vendas" subtitle="Faturamento diário, mensal, cupons e itens">
         <div className="stack">
-          <DataTable title="Faturamento diario" source="analytics.kpi_faturamento_diario" columns={dailyColumns} data={daily.data ?? []} isLoading={daily.isFetching} />
+          <DataTable title="Faturamento diário" source="analytics.kpi_faturamento_diario" columns={dailyColumns} data={daily.data ?? []} isLoading={daily.isFetching} />
           <DataTable title="Faturamento mensal" source="analytics.kpi_faturamento_mensal" columns={monthlyColumns} data={monthly.data ?? []} isLoading={monthly.isFetching} />
           <DataTable title="Cupons emitidos" source="analytics.kpi_cupons" columns={couponColumns} data={coupons.data ?? []} isLoading={coupons.isFetching} />
           <DataTable title="Itens vendidos" source="analytics.kpi_itens_vendidos" columns={itemColumns} data={itemsSold.data ?? []} isLoading={itemsSold.isFetching} />
@@ -194,10 +203,10 @@ export default function Home() {
   const storesSection = (
     <div className="stack">
       <div className="visual-grid visual-grid--wide">
-        <ChartPanel title="Faturamento por loja" subtitle="Todas as lojas no periodo" isLoading={stores.isFetching}>
+        <ChartPanel title="Faturamento por loja" subtitle="Todas as lojas no período" isLoading={stores.isFetching}>
           <StoreRankingChart data={stores.data ?? []} />
         </ChartPanel>
-        <ChartPanel title="Cupons x ticket" subtitle="Dispersao operacional por loja" isLoading={stores.isFetching}>
+        <ChartPanel title="Cupons x ticket" subtitle="Dispersão operacional por loja" isLoading={stores.isFetching}>
           <StoreScatterChart data={stores.data ?? []} />
         </ChartPanel>
       </div>
@@ -213,14 +222,14 @@ export default function Home() {
         <ChartPanel title="Produtos mais lucrativos" subtitle="Top produtos por lucro bruto estimado" badge="estimado" isLoading={mostProfitable.isFetching}>
           <ProductProfitChart data={mostProfitable.data ?? []} />
         </ChartPanel>
-        <ChartPanel title="Produtos com prejuizo" subtitle="Itens com lucro bruto negativo" badge="risco" isLoading={losses.isFetching}>
+        <ChartPanel title="Produtos com prejuízo" subtitle="Itens com lucro bruto negativo" badge="risco" isLoading={losses.isFetching}>
           <ProductProfitChart data={losses.data ?? []} mode="loss" />
         </ChartPanel>
       </div>
       <DrillDownPanel title="Ver produtos em detalhe" subtitle="Lucro, custo, receita e margem por produto">
         <div className="stack">
           <DataTable title="Produtos mais lucrativos" source="analytics.kpi_lucro_produto" columns={productColumns} data={mostProfitable.data ?? []} isLoading={mostProfitable.isFetching} />
-          <DataTable title="Produtos vendidos com prejuizo" source="analytics.kpi_produtos_prejuizo" columns={productColumns} data={losses.data ?? []} isLoading={losses.isFetching} />
+          <DataTable title="Produtos vendidos com prejuízo" source="analytics.kpi_produtos_prejuizo" columns={productColumns} data={losses.data ?? []} isLoading={losses.isFetching} />
         </div>
       </DrillDownPanel>
     </div>
@@ -228,21 +237,21 @@ export default function Home() {
 
   const margin = (
     <div className="stack">
-      <ChartPanel title="Margem bruta" subtitle="Preco de compra + preco de venda + vendas PDV" badge="homologar custo" isLoading={summary.isFetching}>
+      <ChartPanel title="Margem bruta" subtitle="Preço de compra + preço de venda + vendas PDV" badge="homologar custo" isLoading={summary.isFetching}>
         <MarginHero summary={summary.data} />
       </ChartPanel>
       <div className="visual-grid visual-grid--wide">
         <ChartPanel title="Mais lucrativos" subtitle="Produtos que mais contribuem no lucro" isLoading={mostProfitable.isFetching}>
           <ProductProfitChart data={mostProfitable.data ?? []} />
         </ChartPanel>
-        <ChartPanel title="Menos lucrativos" subtitle="Produtos com pior resultado estimado" badge="atencao" isLoading={leastProfitable.isFetching}>
+        <ChartPanel title="Menos lucrativos" subtitle="Produtos com pior resultado estimado" badge="atenção" isLoading={leastProfitable.isFetching}>
           <ProductProfitChart data={leastProfitable.data ?? []} mode="loss" />
         </ChartPanel>
       </div>
-      <DrillDownPanel title="Ver dados tecnicos de margem" subtitle="Tabelas usadas para auditoria do calculo">
+      <DrillDownPanel title="Ver dados técnicos de margem" subtitle="Tabelas usadas para auditoria do cálculo">
         <div className="stack">
           <DataTable title="Produtos menos lucrativos" source="analytics.kpi_lucro_produto" columns={productColumns} data={leastProfitable.data ?? []} isLoading={leastProfitable.isFetching} />
-          <DataTable title="Produtos com prejuizo" source="analytics.kpi_produtos_prejuizo" columns={productColumns} data={losses.data ?? []} isLoading={losses.isFetching} />
+          <DataTable title="Produtos com prejuízo" source="analytics.kpi_produtos_prejuizo" columns={productColumns} data={losses.data ?? []} isLoading={losses.isFetching} />
         </div>
       </DrillDownPanel>
     </div>
@@ -261,8 +270,8 @@ export default function Home() {
       <main>
         <header className="page-header">
           <div>
-            <h1>Inteligencia da Farmacia</h1>
-            <p>KPIs operacionais, tabelas modernas e contexto semantico para perguntas com IA.</p>
+            <h1>Inteligência da Farmácia</h1>
+            <p>KPIs operacionais, tabelas modernas e contexto semântico para perguntas com IA.</p>
           </div>
         </header>
 
@@ -272,7 +281,7 @@ export default function Home() {
         <section className="kpi-grid">
           <KpiCard label="Faturamento" value={compactMoney(summary.data?.faturamento)} note="ajustado" tone="success" />
           <KpiCard label="Cupons" value={compactNumber(summary.data?.cupons, 0)} />
-          <KpiCard label="Ticket medio" value={money(summary.data?.ticket_medio)} />
+          <KpiCard label="Ticket médio" value={money(summary.data?.ticket_medio)} />
           <KpiCard label="Itens vendidos" value={compactNumber(summary.data?.itens, 0)} />
           <KpiCard label="Lucro bruto" value={compactMoney(summary.data?.lucro)} note="estimado" tone="warning" />
           <KpiCard label="Margem" value={percent(summary.data?.margem)} note="estimada" tone="warning" />

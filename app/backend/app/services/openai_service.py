@@ -1,5 +1,6 @@
 import json
 from typing import Any
+import urllib.request
 
 from openai import OpenAI
 
@@ -17,21 +18,59 @@ def get_ai_client(settings: Any) -> OpenAI:
     return OpenAI(**kwargs)
 
 
+def _chat_completion_http(settings: Any, messages: list[dict[str, str]], temperature: float) -> str | None:
+    base_url = (settings.openai_base_url or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base_url}/chat/completions"
+    payload = json.dumps(
+        {
+            "model": settings.openai_model,
+            "messages": messages,
+            "temperature": temperature,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {settings.openai_api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    return body["choices"][0]["message"]["content"]
+
+
+def _chat_completion(settings: Any, messages: list[dict[str, str]], temperature: float) -> str | None:
+    try:
+        client = get_ai_client(settings)
+        response = client.chat.completions.create(
+            model=settings.openai_model,
+            messages=messages,
+            temperature=temperature,
+            timeout=60,
+        )
+        return response.choices[0].message.content
+    except Exception:
+        return _chat_completion_http(settings, messages, temperature)
+
+
 def summarize_with_openai(question: str, route: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
     settings = get_settings()
     if not settings.openai_api_key:
         return None
 
     try:
-        client = get_ai_client(settings)
         payload = {
             "question": question,
             "route": route,
             "rows": rows[:50],
         }
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
+        return _chat_completion(
+            settings,
+            [
                 {
                     "role": "system",
                     "content": "Voce e um analista de BI de farmacias. Responda em portugues, direto, com valor, periodo, fonte e ressalvas. Se lucro/margem for estimado, diga isso.",
@@ -43,7 +82,6 @@ def summarize_with_openai(question: str, route: dict[str, Any], rows: list[dict[
             ],
             temperature=0.2,
         )
-        return response.choices[0].message.content
     except Exception:
         return None
 
@@ -67,6 +105,11 @@ Se a pergunta atual for follow-up, preserve o assunto anterior.
 Nao repita a mesma resposta anterior; complemente, compare ou aprofunde.
 Se faltar dado no pacote de KPIs, diga objetivamente o que falta.
 Se a pergunta pedir faturamento por mes, mensal, mes a mes ou cada mes, use o campo faturamento_mensal do pacote de KPIs.
+Se a pergunta pedir vendedores/equipe, use ranking_vendedores.
+Se a pergunta pedir horarios/faixas de movimento, use vendas_por_horario.
+Se a pergunta pedir problemas, riscos ou prioridades, use alertas_operacionais e executivo.
+Se a pergunta pedir clientes, recorrencia, VIP, inativos ou LTV, use clientes e clientes_vip.
+Se a pergunta pedir curva ABC, produtos lideres, crescimento, queda ou sazonalidade, use produtos_estrategicos e tendencias_produtos.
 Quando falar de lucro, margem ou produtos recomendados, informe que sao estimados ate homologacao final de custo.
 Responda em portugues, de forma executiva e curta.
 """.strip()
@@ -78,16 +121,14 @@ Responda em portugues, de forma executiva e curta.
     }
 
     try:
-        client = get_ai_client(settings)
-        response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[
+        return _chat_completion(
+            settings,
+            [
                 {"role": "system", "content": system},
                 *safe_history,
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, default=str)},
             ],
             temperature=0.25,
         )
-        return response.choices[0].message.content
     except Exception:
         return None

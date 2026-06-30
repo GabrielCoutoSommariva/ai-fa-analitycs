@@ -23,6 +23,15 @@ def normalize_cnpj(cnpj: str | None) -> str | None:
     return digits or None
 
 
+def cnpj_scope(cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, str | list[str]]:
+    normalized = normalize_cnpj(cnpj)
+    if normalized:
+        return {"cnpj": normalized}
+    if authorized_cnpjs is not None:
+        return {"cnpjs": [item for item in (normalize_cnpj(value) for value in authorized_cnpjs) if item]}
+    return {}
+
+
 @lru_cache(maxsize=1)
 def complete_sales_period() -> dict:
     return fetch_one(
@@ -52,13 +61,30 @@ def get_catalog() -> list[dict]:
     )
 
 
-def periodo_vendas() -> dict:
-    return complete_sales_period()
+def periodo_vendas(authorized_cnpjs: list[str] | None = None) -> dict:
+    scope = cnpj_scope(None, authorized_cnpjs)
+    if not scope:
+        return complete_sales_period()
+    where, params = build_where(scope, ["cnpjs"])
+    return fetch_one(
+        f"""
+        select min(data) as data_inicio, max(data) as data_fim
+        from analytics.fact_venda
+        {where}
+        """,
+        params,
+    ) or {"data_inicio": None, "data_fim": None}
 
 
-def lojas_cnpj() -> list[dict]:
+def lojas_cnpj(authorized_cnpjs: list[str] | None = None) -> list[dict]:
+    scope = cnpj_scope(None, authorized_cnpjs)
+    params: dict[str, list[str]] = {}
+    auth_filter = ""
+    if "cnpjs" in scope:
+        params["cnpjs"] = scope["cnpjs"]
+        auth_filter = "and regexp_replace(coalesce(cnpj, ''), '\\D', '', 'g') = any(%(cnpjs)s)" if scope["cnpjs"] else "and false"
     return fetch_all(
-        """
+        f"""
         select
           cnpj,
           regexp_replace(coalesce(cnpj, ''), '\\D', '', 'g') as cnpj_digits,
@@ -66,14 +92,19 @@ def lojas_cnpj() -> list[dict]:
           array_agg(json_build_object('loja_id', loja_id, 'loja', nome) order by nome) as lojas_vinculadas
         from analytics.dim_loja
         where cnpj is not null and btrim(cnpj) <> ''
+        {auth_filter}
         group by cnpj
         order by cnpj
-        """
+        """,
+        params,
     )
 
 
-def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | None) -> dict:
-    where, params = build_where({"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj}, ["data_inicio", "data_fim", "cnpj"])
+def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict:
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
     return fetch_one(
         f"""
         with fat as (
@@ -110,10 +141,10 @@ def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | Non
     ) or {}
 
 
-def faturamento_diario(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def faturamento_diario(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     where, params = build_where(
-        {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj},
-        ["data_inicio", "data_fim", "cnpj"],
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
     )
     params["limit"] = clamp_limit(limit)
     return fetch_all(
@@ -128,10 +159,10 @@ def faturamento_diario(data_inicio: date | None, data_fim: date | None, cnpj: st
     )
 
 
-def faturamento_mensal(mes_inicio: date | None, mes_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def faturamento_mensal(mes_inicio: date | None, mes_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     where, params = build_where(
-        {"mes_inicio": mes_inicio, "mes_fim": mes_fim, "cnpj": cnpj},
-        ["mes_inicio", "mes_fim", "cnpj"],
+        {"mes_inicio": mes_inicio, "mes_fim": mes_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["mes_inicio", "mes_fim", "cnpj", "cnpjs"],
     )
     params["limit"] = clamp_limit(limit)
     return fetch_all(
@@ -146,7 +177,7 @@ def faturamento_mensal(mes_inicio: date | None, mes_fim: date | None, cnpj: str 
     )
 
 
-def faturamento_loja(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def faturamento_loja(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     params = {"limit": clamp_limit(limit)}
     vendas_clauses: list[str] = []
     lojas_clauses: list[str] = []
@@ -158,10 +189,13 @@ def faturamento_loja(data_inicio: date | None, data_fim: date | None, cnpj: str 
         vendas_clauses.append("data <= %(data_fim)s")
         params["data_fim"] = data_fim
 
-    normalized_cnpj = normalize_cnpj(cnpj)
-    if normalized_cnpj:
+    scope = cnpj_scope(cnpj, authorized_cnpjs)
+    if scope.get("cnpj"):
         lojas_clauses.append("regexp_replace(coalesce(l.cnpj, ''), '\\D', '', 'g') = %(cnpj)s")
-        params["cnpj"] = normalized_cnpj
+        params["cnpj"] = scope["cnpj"]
+    elif "cnpjs" in scope:
+        lojas_clauses.append("regexp_replace(coalesce(l.cnpj, ''), '\\D', '', 'g') = any(%(cnpjs)s)" if scope["cnpjs"] else "false")
+        params["cnpjs"] = scope["cnpjs"]
     else:
         lojas_clauses.append("l.loja_id in (select distinct loja_id from analytics.mv_kpi_faturamento_loja)")
 
@@ -196,10 +230,10 @@ def faturamento_loja(data_inicio: date | None, data_fim: date | None, cnpj: str 
     )
 
 
-def cupons(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def cupons(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     where, params = build_where(
-        {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj},
-        ["data_inicio", "data_fim", "cnpj"],
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
     )
     params["limit"] = clamp_limit(limit)
     return fetch_all(
@@ -214,10 +248,10 @@ def cupons(data_inicio: date | None, data_fim: date | None, cnpj: str | None, li
     )
 
 
-def itens_vendidos(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def itens_vendidos(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     where, params = build_where(
-        {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj},
-        ["data_inicio", "data_fim", "cnpj"],
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
     )
     params["limit"] = clamp_limit(limit)
     return fetch_all(
@@ -238,10 +272,12 @@ def lucro_produto(
     cnpj: str | None,
     order: Literal["asc", "desc"],
     limit: int | None,
+    authorized_cnpjs: list[str] | None = None,
 ) -> list[dict]:
     full_period = is_complete_period(data_inicio, data_fim)
-    filters = {"cnpj": cnpj} if full_period else {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj}
-    allowed = ["cnpj"] if full_period else ["data_inicio", "data_fim", "cnpj"]
+    scope = cnpj_scope(cnpj, authorized_cnpjs)
+    filters = scope if full_period else {"data_inicio": data_inicio, "data_fim": data_fim, **scope}
+    allowed = ["cnpj", "cnpjs"] if full_period else ["data_inicio", "data_fim", "cnpj", "cnpjs"]
     source = "analytics.mv_kpi_lucro_produto_total_loja" if full_period else "analytics.mv_kpi_lucro_produto"
     where, params = build_where(filters, allowed)
     direction = "asc" if order == "asc" else "desc"
@@ -266,10 +302,11 @@ def lucro_produto(
     )
 
 
-def produtos_prejuizo(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None) -> list[dict]:
+def produtos_prejuizo(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
     full_period = is_complete_period(data_inicio, data_fim)
-    filters = {"cnpj": cnpj} if full_period else {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj}
-    allowed = ["cnpj"] if full_period else ["data_inicio", "data_fim", "cnpj"]
+    scope = cnpj_scope(cnpj, authorized_cnpjs)
+    filters = scope if full_period else {"data_inicio": data_inicio, "data_fim": data_fim, **scope}
+    allowed = ["cnpj", "cnpjs"] if full_period else ["data_inicio", "data_fim", "cnpj", "cnpjs"]
     source = "analytics.mv_kpi_lucro_produto_total_loja" if full_period else "analytics.mv_kpi_lucro_produto"
     where, params = build_where(filters, allowed)
     params["limit"] = clamp_limit(limit)

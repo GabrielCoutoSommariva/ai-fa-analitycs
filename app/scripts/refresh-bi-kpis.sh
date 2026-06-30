@@ -36,6 +36,12 @@ refresh materialized view analytics.mv_kpi_faturamento_loja;
 refresh materialized view analytics.mv_kpi_lucro_produto;
 refresh materialized view analytics.mv_kpi_lucro_produto_total_loja;
 refresh materialized view analytics.mv_kpi_lucro_total_diario;
+refresh materialized view analytics.mv_ai_resumo_executivo_diario;
+refresh materialized view analytics.mv_ai_vendedor_diario;
+refresh materialized view analytics.mv_ai_vendas_horario;
+refresh materialized view analytics.mv_ai_alertas_operacionais;
+refresh materialized view analytics.mv_ai_cliente_diario;
+refresh materialized view analytics.mv_ai_produto_mensal;
 
 analyze analytics.mv_kpi_faturamento_diario;
 analyze analytics.mv_kpi_faturamento_mensal;
@@ -45,6 +51,12 @@ analyze analytics.mv_kpi_faturamento_loja;
 analyze analytics.mv_kpi_lucro_produto;
 analyze analytics.mv_kpi_lucro_produto_total_loja;
 analyze analytics.mv_kpi_lucro_total_diario;
+analyze analytics.mv_ai_resumo_executivo_diario;
+analyze analytics.mv_ai_vendedor_diario;
+analyze analytics.mv_ai_vendas_horario;
+analyze analytics.mv_ai_alertas_operacionais;
+analyze analytics.mv_ai_cliente_diario;
+analyze analytics.mv_ai_produto_mensal;
 SQL
 
 trap - ERR

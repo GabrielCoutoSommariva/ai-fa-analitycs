@@ -61,6 +61,19 @@ def build_where(filters: dict[str, Any], allowed: Iterable[str]) -> tuple[str, d
                 "regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = %(cnpj)s"
                 ")"
             )
+        elif key == "cnpjs":
+            value = [re.sub(r"\D", "", str(item)) for item in value]
+            value = [item for item in value if item]
+            if not value:
+                clauses.append("false")
+                continue
+            clauses.append(
+                "loja_id in ("
+                "select filtro_loja.loja_id from analytics.dim_loja filtro_loja "
+                "where "
+                "regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = any(%(cnpjs)s)"
+                ")"
+            )
         else:
             clauses.append(f"{key} = %({key})s")
         params[key] = value

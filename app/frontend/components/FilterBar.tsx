@@ -35,7 +35,7 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
   return (
     <section className="filter-bar">
       <label>
-        Data inicio
+        Data início
         <input type="date" value={filters.dataInicio} onChange={(event) => setFilters({ ...filters, dataInicio: event.target.value })} />
       </label>
       <label>

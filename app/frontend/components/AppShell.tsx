@@ -3,7 +3,7 @@ import { BarChart3, Building2, DollarSign, PackageSearch, ShoppingCart } from "l
 export type DashboardSection = "overview" | "sales" | "stores" | "products" | "margin"
 
 const nav: Array<{ id: DashboardSection; label: string; icon: typeof BarChart3 }> = [
-  { id: "overview", label: "Visao geral", icon: BarChart3 },
+  { id: "overview", label: "Visão geral", icon: BarChart3 },
   { id: "sales", label: "Vendas", icon: ShoppingCart },
   { id: "stores", label: "Lojas", icon: Building2 },
   { id: "products", label: "Produtos", icon: PackageSearch },
@@ -21,7 +21,7 @@ export function AppShell({ activeSection, onSectionChange, children }: AppShellP
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <img src="/assets/logo-colored.webp" alt="Inteligencia da Farmacia" />
+          <img src="/assets/logo-colored.webp" alt="Inteligência da Farmácia" />
         </div>
         <nav>
           {nav.map((item) => {

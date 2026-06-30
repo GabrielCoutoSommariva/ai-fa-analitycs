@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Teste de Auth JWT - Farmacias BI</title>
+    <title>Teste de Auth JWT - Farmácias BI</title>
     <style>
       :root {
         color-scheme: light;
@@ -199,7 +199,7 @@
     <main>
       <header>
         <h1>Teste de login por JWT</h1>
-        <p>Use esta pagina para validar o fluxo <code>?token=</code>, criacao de sessao HTTP-only, retorno de usuario e CNPJs autorizados.</p>
+        <p>Use esta página para validar o fluxo <code>?token=</code>, criação de sessão HTTP-only, retorno de usuário e CNPJs autorizados.</p>
       </header>
 
       <section class="grid">
@@ -211,23 +211,23 @@
 
           <label>
             JWT externo
-            <textarea id="token" placeholder="Cole aqui o JWT recebido pela aplicacao externa"></textarea>
+            <textarea id="token" placeholder="Cole aqui o JWT recebido pela aplicação externa"></textarea>
           </label>
 
           <div class="actions">
-            <button id="createSession">Criar sessao</button>
-            <button id="checkSession" class="secondary">Validar sessao</button>
+            <button id="createSession">Criar sessão</button>
+            <button id="checkSession" class="secondary">Validar sessão</button>
             <button id="decodeToken" class="secondary">Decodificar payload</button>
             <button id="logout" class="warning">Logout</button>
           </div>
 
-          <div class="hint">O cookie de sessao e HTTP-only. O navegador nao consegue ler o cookie via JavaScript; a validacao correta e chamar <code>/auth/me</code>.</div>
+          <div class="hint">O cookie de sessão é HTTP-only. O navegador não consegue ler o cookie via JavaScript; a validação correta é chamar <code>/auth/me</code>.</div>
           <div id="status" class="status">Aguardando teste.</div>
 
           <div class="summary">
             <div class="pill"><strong>Auth ativa</strong><span id="authEnabled">-</span></div>
             <div class="pill"><strong>Autenticado</strong><span id="authenticated">-</span></div>
-            <div class="pill"><strong>Usuario</strong><span id="username">-</span></div>
+            <div class="pill"><strong>Usuário</strong><span id="username">-</span></div>
             <div class="pill"><strong>CNPJs autorizados</strong><span id="cnpjs">-</span></div>
           </div>
         </div>
@@ -280,6 +280,15 @@
         return body
       }
 
+      async function redirectToLoginWhenConfigured() {
+        const state = await request("/auth/me")
+        if (state && state.auth_enabled && !state.authenticated && state.login_url) {
+          window.location.href = state.login_url
+          return true
+        }
+        return false
+      }
+
       function decodePayload(rawToken) {
         const parts = rawToken.split(".")
         if (parts.length !== 3) throw new Error("JWT precisa ter 3 partes")
@@ -293,18 +302,20 @@
           const rawToken = token.value.trim()
           if (!rawToken) throw new Error("Cole um token primeiro")
           await request("/auth/session?token=" + encodeURIComponent(rawToken))
-          setStatus("Sessao criada com sucesso.", true)
+          setStatus("Sessão criada com sucesso.", true)
         } catch (error) {
-          setStatus(error.message || "Erro ao criar sessao.", false)
+          if (await redirectToLoginWhenConfigured()) return
+          setStatus(error.message || "Erro ao criar sessão.", false)
         }
       })
 
       document.getElementById("checkSession").addEventListener("click", async () => {
         try {
           await request("/auth/me")
-          setStatus("Sessao consultada.", true)
+          setStatus("Sessão consultada.", true)
         } catch (error) {
-          setStatus(error.message || "Erro ao validar sessao.", false)
+          if (await redirectToLoginWhenConfigured()) return
+          setStatus(error.message || "Erro ao validar sessão.", false)
         }
       })
 
@@ -321,7 +332,7 @@
         try {
           const payload = decodePayload(token.value.trim())
           show({ decoded_payload: payload })
-          setStatus("Payload decodificado localmente. Assinatura nao validada pelo navegador.", true)
+          setStatus("Payload decodificado localmente. Assinatura não validada pelo navegador.", true)
         } catch (error) {
           setStatus(error.message || "Erro ao decodificar token.", false)
         }

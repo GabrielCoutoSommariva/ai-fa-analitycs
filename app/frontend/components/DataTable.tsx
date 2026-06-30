@@ -114,7 +114,7 @@ export function DataTable<TData>({ columns, data, isLoading = false, searchPlace
         <span>{table.getFilteredRowModel().rows.length} registros</span>
         <div>
           <Button variant="ghost" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}><ChevronLeft size={16} /></Button>
-          <span>Pagina {table.getState().pagination.pageIndex + 1} de {table.getPageCount() || 1}</span>
+          <span>Página {table.getState().pagination.pageIndex + 1} de {table.getPageCount() || 1}</span>
           <Button variant="ghost" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}><ChevronRight size={16} /></Button>
         </div>
       </div>
