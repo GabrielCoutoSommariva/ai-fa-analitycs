@@ -124,3 +124,30 @@ def produtos_prejuizo(
     user = current_user(request)
     scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
     return service.produtos_prejuizo(data_inicio, data_fim, scoped_cnpj, limit, scoped_cnpjs)
+
+
+@router.get("/descontos-devolucoes")
+def descontos_devolucoes(
+    request: Request,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    cnpj: str | None = None,
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict]:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.descontos_devolucoes(data_inicio, data_fim, scoped_cnpj, limit, scoped_cnpjs)
+
+
+@router.get("/produtos-descontos-devolucoes")
+def produtos_descontos_devolucoes(
+    request: Request,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    cnpj: str | None = None,
+    order: Literal["desconto", "devolucao"] = "devolucao",
+    limit: int = Query(50, ge=1, le=500),
+) -> list[dict]:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.produtos_descontos_devolucoes(data_inicio, data_fim, scoped_cnpj, order, limit, scoped_cnpjs)

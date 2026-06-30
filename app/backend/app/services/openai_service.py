@@ -110,6 +110,7 @@ Se a pergunta pedir horarios/faixas de movimento, use vendas_por_horario.
 Se a pergunta pedir problemas, riscos ou prioridades, use alertas_operacionais e executivo.
 Se a pergunta pedir clientes, recorrencia, VIP, inativos ou LTV, use clientes e clientes_vip.
 Se a pergunta pedir curva ABC, produtos lideres, crescimento, queda ou sazonalidade, use produtos_estrategicos e tendencias_produtos.
+Se a pergunta pedir descontos, desconto manual/sistema, devolucoes ou produtos devolvidos, use descontos_devolucoes e produtos_com_desconto_devolucao.
 Quando falar de lucro, margem ou produtos recomendados, informe que sao estimados ate homologacao final de custo.
 Responda em portugues, de forma executiva e curta.
 """.strip()

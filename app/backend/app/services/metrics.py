@@ -328,3 +328,70 @@ def produtos_prejuizo(data_inicio: date | None, data_fim: date | None, cnpj: str
         """,
         params,
     )
+
+
+def descontos_devolucoes(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+    params["limit"] = clamp_limit(limit)
+    return fetch_all(
+        f"""
+        select
+          data,
+          associado_id,
+          loja_id,
+          qtd_cupons,
+          faturamento_liquido,
+          desconto_manual,
+          desconto_automatico,
+          desconto_total,
+          percentual_desconto,
+          valor_devolucao,
+          percentual_devolucao
+        from analytics.mv_ai_desconto_devolucao_diario
+        {where}
+        order by data desc, desconto_total desc, valor_devolucao desc
+        limit %(limit)s
+        """,
+        params,
+    )
+
+
+def produtos_descontos_devolucoes(
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    order: Literal["desconto", "devolucao"],
+    limit: int | None,
+    authorized_cnpjs: list[str] | None = None,
+) -> list[dict]:
+    mes_inicio = data_inicio.replace(day=1) if data_inicio else None
+    mes_fim = data_fim.replace(day=1) if data_fim else None
+    where, params = build_where(
+        {"mes_inicio": mes_inicio, "mes_fim": mes_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["mes_inicio", "mes_fim", "cnpj", "cnpjs"],
+    )
+    order_column = "desconto_total" if order == "desconto" else "valor_devolucao"
+    params["limit"] = clamp_limit(limit)
+    return fetch_all(
+        f"""
+        select
+          produto_id,
+          max(produto) as produto,
+          sum(qtd_liquida) as qtd_liquida,
+          sum(receita_liquida_item) as receita_liquida_item,
+          sum(desconto_manual) as desconto_manual,
+          sum(desconto_automatico) as desconto_automatico,
+          sum(desconto_total) as desconto_total,
+          sum(valor_devolucao) as valor_devolucao,
+          sum(qtd_devolvida) as qtd_devolvida
+        from analytics.mv_ai_desconto_devolucao_produto_mensal
+        {where}
+        group by produto_id
+        order by {order_column} desc
+        limit %(limit)s
+        """,
+        params,
+    )

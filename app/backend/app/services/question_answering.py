@@ -358,6 +358,32 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     order by abs(receita_fim - receita_inicio) desc
     limit 10
     """
+    discounts_sql = f"""
+    select
+      coalesce(sum(faturamento_liquido), 0) as faturamento,
+      coalesce(sum(desconto_manual), 0) as desconto_manual,
+      coalesce(sum(desconto_automatico), 0) as desconto_automatico,
+      coalesce(sum(desconto_total), 0) as desconto_total,
+      case when sum(faturamento_liquido) = 0 then null else sum(desconto_total) / sum(faturamento_liquido) end as percentual_desconto,
+      coalesce(sum(valor_devolucao), 0) as valor_devolucao,
+      case when sum(faturamento_liquido + valor_devolucao) = 0 then null else sum(valor_devolucao) / sum(faturamento_liquido + valor_devolucao) end as percentual_devolucao
+    from analytics.mv_ai_desconto_devolucao_diario
+    where data between %(data_inicio)s and %(data_fim)s {loja_filter}
+    """
+    discount_return_products_sql = f"""
+    select
+      produto_id,
+      max(produto) as produto,
+      sum(desconto_total) as desconto_total,
+      sum(valor_devolucao) as valor_devolucao,
+      sum(qtd_devolvida) as qtd_devolvida,
+      sum(receita_liquida_item) as receita
+    from analytics.mv_ai_desconto_devolucao_produto_mensal
+    where mes between date_trunc('month', %(data_inicio)s::date)::date and date_trunc('month', %(data_fim)s::date)::date {loja_filter}
+    group by produto_id
+    order by valor_devolucao desc, desconto_total desc
+    limit 10
+    """
 
     return serialize({
         "periodo": {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj, "cnpjs_autorizados": authorized_cnpjs},
@@ -375,6 +401,8 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
         "clientes_vip": execute_optional_select(vip_customers_sql, params),
         "produtos_estrategicos": execute_optional_select(strategic_products_sql, params),
         "tendencias_produtos": execute_optional_select(product_trends_sql, params),
+        "descontos_devolucoes": (execute_optional_select(discounts_sql, params) or [{}])[0],
+        "produtos_com_desconto_devolucao": execute_optional_select(discount_return_products_sql, params),
         "observacoes": [
             "faturamento = vlr_liquido - vlr_devolucao",
             "faturamento_mensal contem ate os ultimos 36 meses do periodo filtrado, em ordem cronologica",
@@ -383,6 +411,7 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
             "vendedor usa itens da venda e pode diferir do atendente do cabecalho",
             "clientes dependem de cliente_id preenchido na venda",
             "curva ABC de produtos e tendencias usam meses dentro do periodo selecionado",
+            "descontos e devolucoes usam campos do cabecalho e dos itens de venda disponiveis no banco",
             "use o periodo selecionado como referencia quando a pergunta for vaga",
         ],
     })
@@ -429,6 +458,11 @@ def format_brl(value: Any) -> str:
 def format_int(value: Any) -> str:
     formatted = f"{int(float(value or 0)):,}"
     return formatted.replace(",", ".")
+
+
+def format_percent(value: Any) -> str:
+    formatted = f"{float(value or 0):,.2f}"
+    return formatted.replace(",", "_").replace(".", ",").replace("_", ".") + "%"
 
 
 def has_revenue_word(question: str) -> bool:
@@ -481,10 +515,113 @@ def is_alert_question(question: str) -> bool:
     return any(word in normalized for word in alert_words)
 
 
+def is_discount_return_question(question: str) -> bool:
+    normalized = question.lower()
+    words = [
+        "desconto",
+        "descontos",
+        "devolucao",
+        "devolução",
+        "devolucoes",
+        "devoluções",
+        "produto devolvido",
+        "produtos devolvidos",
+        "estorno",
+        "estornos",
+    ]
+    return any(word in normalized for word in words)
+
+
 def is_customer_question(question: str) -> bool:
     normalized = question.lower()
     customer_words = ["cliente", "clientes", "vip", "recorrente", "recorrentes", "inativo", "inativos", "abandono", "recompra", "ltv"]
     return any(word in normalized for word in customer_words)
+
+
+def answer_discounts_returns(question: str, data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para analisar descontos e devolucoes, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": "descontos_devolucoes"},
+            "params": serialize(params),
+        }
+
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    summary_sql = f"""
+    select
+      coalesce(sum(faturamento_liquido), 0) as faturamento,
+      coalesce(sum(qtd_cupons), 0) as cupons,
+      coalesce(sum(desconto_manual), 0) as desconto_manual,
+      coalesce(sum(desconto_automatico), 0) as desconto_automatico,
+      coalesce(sum(desconto_total), 0) as desconto_total,
+      case when sum(faturamento_liquido) = 0 then null else sum(desconto_total) / sum(faturamento_liquido) end as percentual_desconto,
+      coalesce(sum(valor_devolucao), 0) as valor_devolucao,
+      case when sum(faturamento_liquido + valor_devolucao) = 0 then null else sum(valor_devolucao) / sum(faturamento_liquido + valor_devolucao) end as percentual_devolucao
+    from analytics.mv_ai_desconto_devolucao_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    products_sql = f"""
+    select
+      produto_id,
+      max(produto) as produto,
+      sum(desconto_total) as desconto_total,
+      sum(valor_devolucao) as valor_devolucao,
+      sum(qtd_devolvida) as qtd_devolvida,
+      sum(receita_liquida_item) as receita
+    from analytics.mv_ai_desconto_devolucao_produto_mensal
+    where mes between date_trunc('month', %(data_inicio)s::date)::date and date_trunc('month', %(data_fim)s::date)::date
+    {loja_filter}
+    group by produto_id
+    order by valor_devolucao desc, desconto_total desc
+    limit 10
+    """
+    daily_sql = f"""
+    select
+      data,
+      sum(faturamento_liquido) as faturamento,
+      sum(desconto_total) as desconto_total,
+      sum(valor_devolucao) as valor_devolucao
+    from analytics.mv_ai_desconto_devolucao_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    group by data
+    order by data desc
+    limit 31
+    """
+    summary_rows = [serialize(row) for row in execute_optional_select(summary_sql, params)]
+    product_rows = [serialize(row) for row in execute_optional_select(products_sql, params)]
+    daily_rows = [serialize(row) for row in execute_optional_select(daily_sql, params)]
+    summary = summary_rows[0] if summary_rows else {}
+    discount_pct = float(summary.get("percentual_desconto") or 0) * 100
+    return_pct = float(summary.get("percentual_devolucao") or 0) * 100
+    answer = (
+        f"No periodo de {params['data_inicio']} a {params['data_fim']}, "
+        f"os descontos somaram {format_brl(summary.get('desconto_total'))} "
+        f"({format_percent(discount_pct)} do faturamento) e as devolucoes somaram {format_brl(summary.get('valor_devolucao'))} "
+        f"({format_percent(return_pct)} sobre venda bruta aproximada)."
+    )
+    if product_rows:
+        top = product_rows[0]
+        answer += f" Produto com maior devolucao: {top.get('produto')}, com {format_brl(top.get('valor_devolucao'))}."
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": [{"resumo": summary, "produtos": product_rows, "serie_diaria": daily_rows}],
+        "route": {"status": "consultative_matched", "intent": "descontos_devolucoes"},
+        "params": serialize(params),
+        "sql": summary_sql,
+    }
 
 
 def is_product_strategy_question(question: str) -> bool:
@@ -1249,6 +1386,9 @@ def answer_question(
 
     if is_total_revenue_question(question):
         return answer_total_revenue(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_discount_return_question(question):
+        return answer_discounts_returns(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
 
     if is_seller_question(question):
         return answer_seller_performance(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
