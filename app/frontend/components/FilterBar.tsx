@@ -15,6 +15,11 @@ function formatCnpj(value: string) {
   return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5")
 }
 
+function monthStartFromDate(value: string | null | undefined) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return ""
+  return `${value.slice(0, 8)}01`
+}
+
 type FilterBarProps = {
   filters: DateFilters
   setFilters: (filters: DateFilters) => void
@@ -61,9 +66,9 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
   const totalStores = storeOptions.length || cnpjOptions.reduce((total, item) => total + Number(item.lojas || 0), 0)
   const selectedStoreCount = selectedOption?.linkedStores ?? Number(selectedCnpj?.lojas || 0)
   const storeCountLabel = selectedDigits && selectedStoreCount ? `${selectedStoreCount} loja(s) vinculada(s)` : `${totalStores} loja(s) disponível(is)`
-  const fullStart = salesPeriod.data?.data_inicio ?? ""
-  const fullEnd = salesPeriod.data?.data_fim ?? ""
-  const isFullPeriod = Boolean(fullStart && fullEnd && filters.dataInicio === fullStart && filters.dataFim === fullEnd)
+  const loadedEnd = salesPeriod.data?.data_fim ?? ""
+  const loadedMonthStart = monthStartFromDate(loadedEnd)
+  const isLoadedMonth = Boolean(loadedMonthStart && loadedEnd && filters.dataInicio === loadedMonthStart && filters.dataFim === loadedEnd)
 
   useEffect(() => {
     setIsMounted(true)
@@ -143,8 +148,8 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
           </div>
         )}
       </div>
-      <Button className="filter-clear" variant="ghost" onClick={() => setFilters({ ...filters, dataInicio: fullStart, dataFim: fullEnd })} disabled={!isMounted || !fullStart || !fullEnd || isFullPeriod}>
-        Período completo
+      <Button className="filter-clear" variant="ghost" onClick={() => setFilters({ ...filters, dataInicio: loadedMonthStart, dataFim: loadedEnd })} disabled={!isMounted || !loadedMonthStart || !loadedEnd || isLoadedMonth}>
+        Mês atualizado
       </Button>
       <Button onClick={onRefresh}>{isLoading ? "Atualizando..." : "Atualizar"}</Button>
     </section>

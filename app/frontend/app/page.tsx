@@ -18,9 +18,14 @@ import { compactMoney, compactNumber, money, number, percent } from "@/lib/forma
 import type { AuthState, CouponRow, DailyRevenue, DateFilters, ItemsSoldRow, MonthlyRevenue, ProductProfit, StoreRevenue } from "@/lib/types"
 
 const defaultFilters: DateFilters = {
-  dataInicio: "2026-05-01",
-  dataFim: "2026-05-12",
+  dataInicio: "",
+  dataFim: "",
   cnpj: ""
+}
+
+function monthStartFromDate(value: string | null | undefined) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return ""
+  return `${value.slice(0, 8)}01`
 }
 
 export default function Home() {
@@ -29,13 +34,17 @@ export default function Home() {
   const [authState, setAuthState] = useState<AuthState | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [dateDefaultsApplied, setDateDefaultsApplied] = useState(false)
   const queryClient = useQueryClient()
   const isOverview = activeSection === "overview"
   const isSales = activeSection === "sales"
   const isStores = activeSection === "stores"
   const isProducts = activeSection === "products"
   const isMargin = activeSection === "margin"
-  const canLoadMetrics = authChecked && !authError
+  const canLoadPeriod = authChecked && !authError
+  const canLoadMetrics = canLoadPeriod && Boolean(filters.dataInicio && filters.dataFim)
+
+  const salesPeriod = useQuery({ queryKey: ["salesPeriod"], queryFn: api.salesPeriod, enabled: canLoadPeriod })
 
   useEffect(() => {
     let cancelled = false
@@ -89,6 +98,17 @@ export default function Home() {
       setFilters({ ...filters, cnpj: "" })
     }
   }, [authState, filters])
+
+  useEffect(() => {
+    const lastLoadedDate = salesPeriod.data?.data_fim
+    if (dateDefaultsApplied || !lastLoadedDate) return
+
+    setFilters((current) => {
+      if (current.dataInicio || current.dataFim) return current
+      return { ...current, dataInicio: monthStartFromDate(lastLoadedDate), dataFim: lastLoadedDate }
+    })
+    setDateDefaultsApplied(true)
+  }, [dateDefaultsApplied, salesPeriod.data?.data_fim])
 
   const summary = useQuery({ queryKey: ["summary", filters], queryFn: () => api.summary(filters), enabled: canLoadMetrics })
   const daily = useQuery({ queryKey: ["dailyRevenue", filters], queryFn: () => api.dailyRevenue(filters), enabled: canLoadMetrics && (isOverview || isSales) })

@@ -38,6 +38,7 @@ def complete_sales_period() -> dict:
         """
         select min(data) as data_inicio, max(data) as data_fim
         from analytics.fact_venda
+        where data <= current_date
         """
     ) or {"data_inicio": None, "data_fim": None}
 
@@ -66,11 +67,13 @@ def periodo_vendas(authorized_cnpjs: list[str] | None = None) -> dict:
     if not scope:
         return complete_sales_period()
     where, params = build_where(scope, ["cnpjs"])
+    current_date_clause = "and data <= current_date" if where else "where data <= current_date"
     return fetch_one(
         f"""
         select min(data) as data_inicio, max(data) as data_fim
         from analytics.fact_venda
         {where}
+        {current_date_clause}
         """,
         params,
     ) or {"data_inicio": None, "data_fim": None}
