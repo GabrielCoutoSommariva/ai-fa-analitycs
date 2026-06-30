@@ -32,6 +32,7 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
   const allowedCnpjs = new Set(authorizedStores?.map((store) => store.cnpj.replace(/\D/g, "")) ?? [])
   const cnpjOptions = (cnpjs.data ?? []).filter((item) => !authorizedStores?.length || allowedCnpjs.has(item.cnpj_digits))
   const storeOptions = useMemo(() => cnpjOptions.flatMap((item) => {
+    if (authorizedStores?.length) return []
     const stores = item.lojas_vinculadas.length ? item.lojas_vinculadas : [{ loja_id: 0, loja: `${item.lojas} loja(s)` }]
     return stores.map((store) => ({
       key: `${item.cnpj_digits}-${store.loja_id}-${store.loja}`,
@@ -40,7 +41,19 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
       linkedStores: Number(item.lojas) || stores.length,
       loja: store.loja
     }))
-  }), [cnpjOptions])
+  }).concat((authorizedStores ?? []).flatMap((store, index) => {
+    const digits = store.cnpj.replace(/\D/g, "")
+    if (!digits) return []
+    const dataOption = cnpjOptions.find((item) => item.cnpj_digits === digits)
+    const loja = store.nomeFantasia?.trim() || dataOption?.lojas_vinculadas[0]?.loja || `Loja ${formatCnpj(digits)}`
+    return [{
+      key: `${digits}-${index}-${loja}`,
+      cnpj: store.cnpj,
+      cnpjDigits: digits,
+      linkedStores: Number(dataOption?.lojas) || 1,
+      loja
+    }]
+  })), [authorizedStores, cnpjOptions])
   const salesPeriod = useQuery({ queryKey: ["salesPeriod"], queryFn: api.salesPeriod })
   const selectedDigits = filters.cnpj.replace(/\D/g, "")
   const selectedCnpj = cnpjOptions.find((item) => item.cnpj_digits === selectedDigits || item.cnpj === filters.cnpj)
