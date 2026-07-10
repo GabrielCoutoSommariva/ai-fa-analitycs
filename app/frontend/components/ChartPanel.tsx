@@ -6,11 +6,12 @@ type ChartPanelProps = {
   title: string
   subtitle?: string
   badge?: string
+  actions?: ReactNode
   isLoading?: boolean
   children: ReactNode
 }
 
-export function ChartPanel({ title, subtitle, badge, isLoading = false, children }: ChartPanelProps) {
+export function ChartPanel({ title, subtitle, badge, actions, isLoading = false, children }: ChartPanelProps) {
   return (
     <section className="chart-panel">
       <div className="chart-panel__header">
@@ -18,7 +19,7 @@ export function ChartPanel({ title, subtitle, badge, isLoading = false, children
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        {badge && <Badge tone="warning">{badge}</Badge>}
+        {actions ?? (badge && <Badge tone="warning">{badge}</Badge>)}
       </div>
       <div className="chart-panel__body">
         {isLoading ? <div className="chart-loading"><i></i> Carregando dados...</div> : children}

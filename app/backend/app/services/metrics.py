@@ -37,7 +37,7 @@ def complete_sales_period() -> dict:
     return fetch_one(
         """
         select min(data) as data_inicio, max(data) as data_fim
-        from analytics.fact_venda
+        from analytics.mv_kpi_faturamento_diario
         where data <= current_date
         """
     ) or {"data_inicio": None, "data_fim": None}
@@ -68,15 +68,18 @@ def periodo_vendas(authorized_cnpjs: list[str] | None = None) -> dict:
         return complete_sales_period()
     where, params = build_where(scope, ["cnpjs"])
     current_date_clause = "and data <= current_date" if where else "where data <= current_date"
-    return fetch_one(
+    period = fetch_one(
         f"""
         select min(data) as data_inicio, max(data) as data_fim
-        from analytics.fact_venda
+        from analytics.mv_kpi_faturamento_diario
         {where}
         {current_date_clause}
         """,
         params,
     ) or {"data_inicio": None, "data_fim": None}
+    if not period.get("data_inicio") or not period.get("data_fim"):
+        return complete_sales_period()
+    return period
 
 
 def lojas_cnpj(authorized_cnpjs: list[str] | None = None) -> list[dict]:
@@ -103,17 +106,18 @@ def lojas_cnpj(authorized_cnpjs: list[str] | None = None) -> list[dict]:
     )
 
 
-def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict:
+def summary_totals(filters: dict[str, date | str | list[str] | None], allowed: list[str]) -> dict:
     where, params = build_where(
-        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
-        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+        filters,
+        allowed,
     )
     return fetch_one(
         f"""
         with fat as (
           select
             coalesce(sum(faturamento_liquido), 0) as faturamento,
-            coalesce(sum(qtd_cupons), 0) as cupons
+            coalesce(sum(qtd_cupons), 0) as cupons,
+            count(distinct loja_id) filter (where faturamento_liquido <> 0) as lojas_com_faturamento
           from analytics.mv_kpi_faturamento_diario
           {where}
         ), itens as (
@@ -132,6 +136,8 @@ def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | Non
       select
         fat.faturamento,
         fat.cupons,
+        fat.lojas_com_faturamento,
+        case when fat.lojas_com_faturamento = 0 then 0 else fat.faturamento / fat.lojas_com_faturamento end as faturamento_medio_loja,
         case when fat.cupons = 0 then 0 else fat.faturamento / fat.cupons end as ticket_medio,
         itens.itens,
         lucro.receita,
@@ -142,6 +148,57 @@ def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | Non
         """,
         params,
     ) or {}
+
+
+def get_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict:
+    return summary_totals(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+
+
+def get_summary_matriz(data_inicio: date | None, data_fim: date | None) -> dict:
+    return summary_totals(
+        {"data_inicio": data_inicio, "data_fim": data_fim},
+        ["data_inicio", "data_fim"],
+    )
+
+
+def operacional_summary(data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict:
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+    return fetch_one(
+        f"""
+        select
+          coalesce(sum(total_cupons), 0) as total_cupons,
+          coalesce(sum(cupons_um_item), 0) as cupons_um_item,
+          case when sum(total_cupons) = 0 then null else sum(cupons_um_item)::numeric / sum(total_cupons) end as percentual_cupons_um_item,
+          coalesce(sum(desconto_manual), 0) as desconto_manual,
+          coalesce(sum(desconto_automatico), 0) as desconto_automatico,
+          coalesce(sum(desconto_total), 0) as desconto_total,
+          coalesce(sum(receita_liquida_item), 0) as receita_liquida_item,
+          coalesce(sum(custo_total_estimado), 0) as custo_total_estimado,
+          case when sum(receita_liquida_item) = 0 then null else sum(desconto_manual) / sum(receita_liquida_item) end as percentual_desconto_manual,
+          case when sum(receita_liquida_item) = 0 then null else sum(desconto_automatico) / sum(receita_liquida_item) end as percentual_desconto_automatico,
+          case when sum(receita_liquida_item) = 0 then null else sum(desconto_total) / sum(receita_liquida_item) end as percentual_desconto_total,
+          case when sum(custo_total_estimado) = 0 then null else sum(desconto_total) / sum(custo_total_estimado) end as percentual_desconto_cmv,
+          case when sum(receita_liquida_item) = 0 then null else sum(custo_total_estimado) / sum(receita_liquida_item) end as cmv_percentual,
+          coalesce(sum(linhas_servico), 0) as linhas_servico,
+          coalesce(sum(cupons_com_servico), 0) as cupons_com_servico,
+          coalesce(sum(valor_servico), 0) as valor_servico,
+          coalesce(sum(desconto_servico), 0) as desconto_servico,
+          coalesce(sum(custo_servico), 0) as custo_servico
+        from analytics.mv_kpi_operacional_diario
+        {where}
+        """,
+        params,
+    ) or {}
+
+
+def operacional_summary_matriz(data_inicio: date | None, data_fim: date | None) -> dict:
+    return operacional_summary(data_inicio, data_fim, None, None)
 
 
 def faturamento_diario(data_inicio: date | None, data_fim: date | None, cnpj: str | None, limit: int | None, authorized_cnpjs: list[str] | None = None) -> list[dict]:
@@ -157,6 +214,59 @@ def faturamento_diario(data_inicio: date | None, data_fim: date | None, cnpj: st
         {where}
         order by data desc, faturamento_liquido desc
         limit %(limit)s
+        """,
+        params,
+    )
+
+
+def trend_granularity(data_inicio: date | None, data_fim: date | None, granularidade: Literal["auto", "dia", "mes", "ano"]) -> Literal["dia", "mes", "ano"]:
+    if granularidade != "auto":
+        return granularidade
+    if not data_inicio or not data_fim:
+        return "dia"
+    days = (data_fim - data_inicio).days + 1
+    if days > 730:
+        return "ano"
+    if days > 90:
+        return "mes"
+    return "dia"
+
+
+def faturamento_tendencia(
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    granularidade: Literal["auto", "dia", "mes", "ano"] = "auto",
+    authorized_cnpjs: list[str] | None = None,
+) -> list[dict]:
+    selected = trend_granularity(data_inicio, data_fim, granularidade)
+    period_expr = {
+        "dia": "data",
+        "mes": "date_trunc('month', data)::date",
+        "ano": "date_trunc('year', data)::date",
+    }[selected]
+    label_expr = {
+        "dia": "to_char(data, 'YYYY-MM-DD')",
+        "mes": "to_char(date_trunc('month', data), 'YYYY-MM')",
+        "ano": "to_char(date_trunc('year', data), 'YYYY')",
+    }[selected]
+    where, params = build_where(
+        {"data_inicio": data_inicio, "data_fim": data_fim, **cnpj_scope(cnpj, authorized_cnpjs)},
+        ["data_inicio", "data_fim", "cnpj", "cnpjs"],
+    )
+    params["granularidade"] = selected
+    return fetch_all(
+        f"""
+        select
+          {period_expr} as periodo,
+          {label_expr} as label,
+          %(granularidade)s as granularidade,
+          coalesce(sum(qtd_cupons), 0) as qtd_cupons,
+          coalesce(sum(faturamento_liquido), 0) as faturamento_liquido
+        from analytics.mv_kpi_faturamento_diario
+        {where}
+        group by 1, 2
+        order by 1
         """,
         params,
     )

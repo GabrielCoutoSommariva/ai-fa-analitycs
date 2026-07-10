@@ -1,18 +1,50 @@
 from collections.abc import Iterable
 from contextlib import contextmanager
+import atexit
 import re
 from typing import Any
 
-import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app.config import get_settings
 
 
+_pool: ConnectionPool | None = None
+_pool_config: tuple[str, int, int] | None = None
+
+
+def close_pool() -> None:
+    global _pool, _pool_config
+    if _pool is not None:
+        _pool.close()
+        _pool = None
+        _pool_config = None
+
+
+atexit.register(close_pool)
+
+
+def get_pool() -> ConnectionPool:
+    global _pool, _pool_config
+    settings = get_settings()
+    config = (settings.database_url, settings.database_pool_min_size, settings.database_pool_max_size)
+    if _pool is None or _pool_config != config:
+        if _pool is not None:
+            _pool.close()
+        _pool = ConnectionPool(
+            conninfo=settings.database_url,
+            min_size=settings.database_pool_min_size,
+            max_size=settings.database_pool_max_size,
+            kwargs={"row_factory": dict_row},
+        )
+        _pool_config = config
+    return _pool
+
+
 @contextmanager
 def get_connection():
-    settings = get_settings()
-    with psycopg.connect(settings.database_url, row_factory=dict_row) as conn:
+    with get_pool().connection() as conn:
         yield conn
 
 

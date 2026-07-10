@@ -45,11 +45,11 @@ body {
   color: #b42318;
 }
 
-button, input, textarea {
+button, input, textarea, select {
   font: inherit;
 }
 
-button, input, textarea, table {
+button, input, textarea, select, table {
   font-variant-numeric: tabular-nums;
 }
 
@@ -301,7 +301,7 @@ label, .filter-field {
   color: #0f4f58;
 }
 
-input, textarea {
+input, textarea, select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -311,7 +311,7 @@ input, textarea {
   padding: 11px 12px;
 }
 
-input:focus, textarea:focus {
+input:focus, textarea:focus, select:focus {
   border-color: rgba(85, 214, 190, 0.55);
   box-shadow: 0 0 0 3px rgba(85, 214, 190, 0.12);
 }
@@ -405,6 +405,14 @@ input:focus, textarea:focus {
   white-space: nowrap;
 }
 
+.kpi-card__value {
+  align-self: center;
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-width: 0;
+}
+
 .kpi-card strong {
   align-self: center;
   color: #123f4a;
@@ -422,6 +430,19 @@ input:focus, textarea:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   width: 100%;
+}
+
+.kpi-card small {
+  color: var(--muted);
+  display: block;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: -0.01em;
+  max-width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ui-tabs-list {
@@ -497,6 +518,37 @@ input:focus, textarea:focus {
 .chart-panel__body {
   padding: 14px 12px 18px;
   min-width: 0;
+}
+
+.trend-chart {
+  position: relative;
+}
+
+.trend-controls {
+  align-items: center;
+  background: rgba(24, 184, 168, 0.08);
+  border: 1px solid rgba(24, 184, 168, 0.18);
+  border-radius: 999px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+
+.trend-controls button {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: #0f4f58;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.trend-controls button.active {
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(24, 184, 168, 0.16);
 }
 
 .chart-loading {
@@ -864,6 +916,153 @@ tbody tr:hover {
   padding: 16px 18px;
 }
 
+.floating-report-button {
+  position: fixed;
+  left: 18px;
+  bottom: 24px;
+  z-index: 79;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  width: 244px;
+  border: 1px solid rgba(255, 106, 0, 0.20);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 237, 0.94));
+  box-shadow: 0 14px 36px rgba(7, 17, 31, 0.16);
+  color: #0f4f58;
+  cursor: pointer;
+  justify-content: center;
+  font-weight: 950;
+  padding: 13px 16px;
+}
+
+.floating-report-button:hover {
+  border-color: rgba(255, 106, 0, 0.38);
+  transform: translateY(-1px);
+}
+
+.report-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 92px;
+  z-index: 85;
+  display: grid;
+  gap: 14px;
+  width: min(430px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 120px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(255, 250, 246, 0.97)),
+    radial-gradient(circle at 100% 0%, rgba(255, 106, 0, 0.14), transparent 36%),
+    radial-gradient(circle at 4% 18%, rgba(24, 184, 168, 0.14), transparent 34%);
+  box-shadow: 0 22px 62px rgba(7, 17, 31, 0.18);
+  padding: 16px;
+}
+
+.report-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-panel__header h2 {
+  color: #0f4f58;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+}
+
+.report-panel__header p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.report-form {
+  display: grid;
+  gap: 12px;
+}
+
+.report-form label {
+  display: grid;
+  gap: 6px;
+  color: #214c56;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.report-form__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-form textarea {
+  min-height: 116px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.report-attachment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 106, 0, 0.20);
+  border-radius: 14px;
+  background: rgba(255, 106, 0, 0.07);
+  color: #704018;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 10px;
+}
+
+.report-attachment span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-attachment button {
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.report-context {
+  border: 1px dashed rgba(24, 184, 168, 0.34);
+  border-radius: 14px;
+  background: rgba(24, 184, 168, 0.07);
+  color: #42616b;
+  font-size: 12px;
+  padding: 10px;
+}
+
+.report-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px;
+}
+
+.report-status--success {
+  background: rgba(7, 135, 111, 0.10);
+  color: var(--success);
+}
+
+.report-status--error {
+  background: rgba(214, 64, 64, 0.10);
+  color: var(--danger);
+}
+
 .chat-panel {
   position: fixed;
   right: 24px;
@@ -1222,5 +1421,19 @@ textarea {
     right: 16px;
     bottom: 16px;
   }
+  .floating-report-button {
+    left: 16px;
+    right: auto;
+    bottom: 78px;
+    width: min(244px, calc(100vw - 32px));
+    max-width: calc(100vw - 32px);
+  }
+  .report-panel {
+    right: 12px;
+    bottom: 82px;
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 108px);
+  }
+  .report-form__grid { grid-template-columns: 1fr; }
   .bubble { max-width: 86%; }
 }

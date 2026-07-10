@@ -41,6 +41,8 @@ export type SalesPeriod = {
 
 export type Summary = {
   faturamento: number | string
+  faturamento_medio_loja?: number | string
+  lojas_com_faturamento?: number | string
   cupons: number | string
   ticket_medio: number | string
   itens: number | string
@@ -48,6 +50,28 @@ export type Summary = {
   custo?: number | string
   lucro: number | string
   margem: number | string | null
+  matriz?: Omit<Summary, "matriz">
+}
+
+export type OperationalSummary = {
+  total_cupons: number | string
+  cupons_um_item: number | string
+  percentual_cupons_um_item: number | string | null
+  desconto_manual: number | string
+  desconto_automatico: number | string
+  desconto_total: number | string
+  receita_liquida_item: number | string
+  custo_total_estimado: number | string
+  percentual_desconto_manual: number | string | null
+  percentual_desconto_automatico: number | string | null
+  percentual_desconto_total: number | string | null
+  percentual_desconto_cmv: number | string | null
+  cmv_percentual: number | string | null
+  linhas_servico: number | string
+  cupons_com_servico: number | string
+  valor_servico: number | string
+  desconto_servico: number | string
+  custo_servico: number | string
 }
 
 export type DailyRevenue = {
@@ -59,6 +83,14 @@ export type DailyRevenue = {
   faturamento_produto: number | string
   faturamento_servico: number | string
   valor_devolucao: number | string
+}
+
+export type RevenueTrendPoint = {
+  periodo: string
+  label: string
+  granularidade: "dia" | "mes" | "ano"
+  qtd_cupons: number | string
+  faturamento_liquido: number | string
 }
 
 export type MonthlyRevenue = {
@@ -112,6 +144,7 @@ export type ProductProfit = {
 export type AiRoute = {
   status: string
   question: string
+  thread_id?: string | null
   answer?: string
   openai_enabled?: boolean
   rows?: Record<string, unknown>[]
@@ -146,4 +179,22 @@ export type AiRoute = {
 export type AiHistoryMessage = {
   role: "user" | "assistant"
   content: string
+}
+
+export type ProblemReportPayload = {
+  title: string
+  description: string
+  category: string
+  severity: string
+  contact_email?: string | null
+  page_url?: string | null
+  filters?: Record<string, string>
+  attachment_name?: string | null
+  attachment_type?: string | null
+  attachment_content?: string | null
+}
+
+export type ProblemReportResponse = {
+  status: string
+  message: string
 }

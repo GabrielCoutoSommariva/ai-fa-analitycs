@@ -19,7 +19,7 @@ import {
 } from "recharts"
 
 import { money, number, percent } from "@/lib/format"
-import type { DailyRevenue, ItemsSoldRow, ProductProfit, StoreRevenue, Summary } from "@/lib/types"
+import type { ItemsSoldRow, ProductProfit, RevenueTrendPoint, StoreRevenue, Summary } from "@/lib/types"
 
 const colors = {
   accent: "#18b8a8",
@@ -76,27 +76,29 @@ function StoreRankingTooltip({ active, payload, activeStore }: { active?: boolea
   )
 }
 
-export function RevenueTrendChart({ data }: { data: DailyRevenue[] }) {
-  const grouped = Object.values(data.reduce<Record<string, { data: string; faturamento: number; cupons: number }>>((acc, row) => {
-    const key = row.data
-    acc[key] ??= { data: key, faturamento: 0, cupons: 0 }
-    acc[key].faturamento += Number(row.faturamento_liquido ?? 0)
-    acc[key].cupons += Number(row.qtd_cupons ?? 0)
-    return acc
-  }, {})).sort((a, b) => a.data.localeCompare(b.data))
+export function RevenueTrendChart({ data }: { data: RevenueTrendPoint[] }) {
+  const grouped = data.map((row) => ({
+    periodo: row.periodo,
+    label: row.label,
+    granularidade: row.granularidade,
+    faturamento: Number(row.faturamento_liquido ?? 0),
+    cupons: Number(row.qtd_cupons ?? 0)
+  }))
 
   return (
-    <ResponsiveContainer width="100%" height={320}>
-      <ComposedChart data={grouped}>
-        <CartesianGrid stroke={colors.grid} vertical={false} />
-        <XAxis dataKey="data" tick={{ fill: colors.muted, fontSize: 12 }} tickMargin={12} />
-        <YAxis yAxisId="left" tickFormatter={axisMoney} tick={{ fill: colors.muted, fontSize: 12 }} width={80} />
-        <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => number(v, 0)} tick={{ fill: colors.muted, fontSize: 12 }} width={60} />
-        <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => name === "faturamento" ? money(value as number) : number(value as number, 0)} />
-        <Area yAxisId="left" type="monotone" dataKey="faturamento" fill="rgba(24,184,168,.18)" stroke={colors.accent} strokeWidth={3} />
-        <Bar yAxisId="right" dataKey="cupons" fill="rgba(255,106,0,.58)" radius={[8, 8, 0, 0]} />
-      </ComposedChart>
-    </ResponsiveContainer>
+    <div className="trend-chart">
+      <ResponsiveContainer width="100%" height={320}>
+        <ComposedChart data={grouped}>
+          <CartesianGrid stroke={colors.grid} vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: colors.muted, fontSize: 12 }} tickMargin={12} minTickGap={18} />
+          <YAxis yAxisId="left" tickFormatter={axisMoney} tick={{ fill: colors.muted, fontSize: 12 }} width={80} />
+          <YAxis yAxisId="right" orientation="right" tickFormatter={(v) => number(v, 0)} tick={{ fill: colors.muted, fontSize: 12 }} width={60} />
+          <Tooltip contentStyle={tooltipStyle} formatter={(value, name) => name === "faturamento" ? money(value as number) : number(value as number, 0)} />
+          <Bar yAxisId="left" dataKey="faturamento" fill="rgba(255,106,0,.58)" radius={[8, 8, 0, 0]} />
+          <Area yAxisId="right" type="monotone" dataKey="cupons" fill="rgba(24,184,168,.18)" stroke={colors.accent} strokeWidth={3} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -191,7 +193,7 @@ export function MarginHero({ summary }: { summary?: Summary }) {
   const custo = Number(summary?.custo ?? 0)
   const data = [
     { name: "Receita PDV", value: receita },
-    { name: "Custo de compra", value: custo },
+    { name: "CMV estimado", value: custo },
     { name: "Lucro bruto", value: lucro },
   ]
   return (
@@ -199,7 +201,7 @@ export function MarginHero({ summary }: { summary?: Summary }) {
       <div>
         <span>Margem bruta estimada</span>
         <strong>{percent(margem)}</strong>
-        <p>Receita PDV - custo de compra = {money(lucro)}</p>
+        <p>Receita PDV - CMV estimado = {money(lucro)}</p>
       </div>
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data}>

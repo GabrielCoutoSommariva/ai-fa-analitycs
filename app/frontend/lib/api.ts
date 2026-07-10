@@ -7,7 +7,11 @@ import type {
   ItemsSoldRow,
   LojaCnpj,
   MonthlyRevenue,
+  OperationalSummary,
   ProductProfit,
+  ProblemReportPayload,
+  ProblemReportResponse,
+  RevenueTrendPoint,
   SalesPeriod,
   StoreRevenue,
   Summary,
@@ -44,6 +48,10 @@ export const api = {
   salesPeriod: () => getJson<SalesPeriod>("/metrics/periodo-vendas"),
   lojasCnpj: () => getJson<LojaCnpj[]>("/metrics/lojas-cnpj"),
   summary: (filters: DateFilters) => getJson<Summary>(`/metrics/summary?${query(filters)}`),
+  matrixSummary: (filters: DateFilters) => getJson<Summary>(`/metrics/summary-matriz?${query({ ...filters, cnpj: "" })}`),
+  operationalSummary: (filters: DateFilters) => getJson<OperationalSummary>(`/metrics/operacional-summary?${query(filters)}`),
+  operationalMatrixSummary: (filters: DateFilters) => getJson<OperationalSummary>(`/metrics/operacional-summary-matriz?${query({ ...filters, cnpj: "" })}`),
+  revenueTrend: (filters: DateFilters, granularidade: "auto" | "dia" | "mes" | "ano") => getJson<RevenueTrendPoint[]>(`/metrics/faturamento-tendencia?${query(filters, { granularidade })}`),
   dailyRevenue: (filters: DateFilters) => getJson<DailyRevenue[]>(`/metrics/faturamento-diario?${query(filters, { limit: 250 })}`),
   monthlyRevenue: (filters: DateFilters) => {
     const params = new URLSearchParams()
@@ -58,7 +66,7 @@ export const api = {
   storeRevenue: (filters: DateFilters) => getJson<StoreRevenue[]>(`/metrics/faturamento-loja?${query(filters, { limit: 100 })}`),
   productProfit: (filters: DateFilters, order: "asc" | "desc") => getJson<ProductProfit[]>(`/metrics/lucro-produto?${query(filters, { order, limit: 100 })}`),
   productLosses: (filters: DateFilters) => getJson<ProductProfit[]>(`/metrics/produtos-prejuizo?${query(filters, { limit: 100 })}`),
-  ask: async (question: string, filters: DateFilters, history: AiHistoryMessage[] = []) => {
+  ask: async (question: string, filters: DateFilters, history: AiHistoryMessage[] = [], threadId?: string) => {
     const response = await fetch(`${API_BASE}/ai/question`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -68,10 +76,24 @@ export const api = {
         data_inicio: filters.dataInicio || null,
         data_fim: filters.dataFim || null,
         cnpj: filters.cnpj || null,
-        history
+        history,
+        thread_id: threadId || null
       })
     })
     if (!response.ok) throw new Error(`Erro ${response.status}`)
     return response.json() as Promise<AiRoute>
+  },
+  reportProblem: async (payload: ProblemReportPayload) => {
+    const response = await fetch(`${API_BASE}/support/problem-report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(payload)
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.detail ?? `Erro ${response.status}`)
+    }
+    return response.json() as Promise<ProblemReportResponse>
   }
 }

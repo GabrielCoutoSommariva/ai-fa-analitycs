@@ -15,9 +15,13 @@ function formatCnpj(value: string) {
   return digits.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5")
 }
 
-function monthStartFromDate(value: string | null | undefined) {
+function previousMonthStartFromDate(value: string | null | undefined) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return ""
-  return `${value.slice(0, 8)}01`
+  const year = Number(value.slice(0, 4))
+  const month = Number(value.slice(5, 7))
+  const previousYear = month === 1 ? year - 1 : year
+  const previousMonth = month === 1 ? 12 : month - 1
+  return `${previousYear}-${String(previousMonth).padStart(2, "0")}-01`
 }
 
 type FilterBarProps = {
@@ -67,8 +71,8 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
   const selectedStoreCount = selectedOption?.linkedStores ?? Number(selectedCnpj?.lojas || 0)
   const storeCountLabel = selectedDigits && selectedStoreCount ? `${selectedStoreCount} loja(s) vinculada(s)` : `${totalStores} loja(s) disponível(is)`
   const loadedEnd = salesPeriod.data?.data_fim ?? ""
-  const loadedMonthStart = monthStartFromDate(loadedEnd)
-  const isLoadedMonth = Boolean(loadedMonthStart && loadedEnd && filters.dataInicio === loadedMonthStart && filters.dataFim === loadedEnd)
+  const loadedRangeStart = previousMonthStartFromDate(loadedEnd)
+  const isLoadedRange = Boolean(loadedRangeStart && loadedEnd && filters.dataInicio === loadedRangeStart && filters.dataFim === loadedEnd)
 
   useEffect(() => {
     setIsMounted(true)
@@ -148,8 +152,8 @@ export function FilterBar({ filters, setFilters, onRefresh, isLoading, authorize
           </div>
         )}
       </div>
-      <Button className="filter-clear" variant="ghost" onClick={() => setFilters({ ...filters, dataInicio: loadedMonthStart, dataFim: loadedEnd })} disabled={!isMounted || !loadedMonthStart || !loadedEnd || isLoadedMonth}>
-        Mês atualizado
+      <Button className="filter-clear" variant="ghost" onClick={() => setFilters({ ...filters, dataInicio: loadedRangeStart, dataFim: loadedEnd })} disabled={!isMounted || !loadedRangeStart || !loadedEnd || isLoadedRange}>
+        Mês anterior até hoje
       </Button>
       <Button onClick={onRefresh}>{isLoading ? "Atualizando..." : "Atualizar"}</Button>
     </section>

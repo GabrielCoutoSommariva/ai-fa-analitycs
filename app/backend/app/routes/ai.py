@@ -15,6 +15,7 @@ class QuestionRequest(BaseModel):
     data_fim: date | None = None
     cnpj: str | None = None
     history: list[dict[str, str]] = Field(default_factory=list)
+    thread_id: str | None = None
 
 
 @router.get("/context")
@@ -33,4 +34,6 @@ def metric(metric_key: str, request: Request) -> dict | None:
 def question(payload: QuestionRequest, request: Request) -> dict:
     user = current_user(request)
     scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(payload.cnpj, user)
-    return answer_question(payload.question, payload.data_inicio, payload.data_fim, scoped_cnpj, payload.history, scoped_cnpjs)
+    result = answer_question(payload.question, payload.data_inicio, payload.data_fim, scoped_cnpj, payload.history, scoped_cnpjs)
+    result["thread_id"] = payload.thread_id
+    return result

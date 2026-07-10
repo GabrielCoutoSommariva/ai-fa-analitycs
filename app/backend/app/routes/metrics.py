@@ -34,6 +34,25 @@ def summary(request: Request, data_inicio: date | None = None, data_fim: date | 
     return service.get_summary(data_inicio, data_fim, scoped_cnpj, scoped_cnpjs)
 
 
+@router.get("/summary-matriz")
+def summary_matriz(request: Request, data_inicio: date | None = None, data_fim: date | None = None) -> dict:
+    current_user(request)
+    return service.get_summary_matriz(data_inicio, data_fim)
+
+
+@router.get("/operacional-summary")
+def operacional_summary(request: Request, data_inicio: date | None = None, data_fim: date | None = None, cnpj: str | None = None) -> dict:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.operacional_summary(data_inicio, data_fim, scoped_cnpj, scoped_cnpjs)
+
+
+@router.get("/operacional-summary-matriz")
+def operacional_summary_matriz(request: Request, data_inicio: date | None = None, data_fim: date | None = None) -> dict:
+    current_user(request)
+    return service.operacional_summary_matriz(data_inicio, data_fim)
+
+
 @router.get("/faturamento-diario")
 def faturamento_diario(
     request: Request,
@@ -45,6 +64,19 @@ def faturamento_diario(
     user = current_user(request)
     scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
     return service.faturamento_diario(data_inicio, data_fim, scoped_cnpj, limit, scoped_cnpjs)
+
+
+@router.get("/faturamento-tendencia")
+def faturamento_tendencia(
+    request: Request,
+    data_inicio: date | None = None,
+    data_fim: date | None = None,
+    cnpj: str | None = None,
+    granularidade: Literal["auto", "dia", "mes", "ano"] = "auto",
+) -> list[dict]:
+    user = current_user(request)
+    scoped_cnpj, scoped_cnpjs = authorized_cnpj_scope(cnpj, user)
+    return service.faturamento_tendencia(data_inicio, data_fim, scoped_cnpj, granularidade, scoped_cnpjs)
 
 
 @router.get("/faturamento-mensal")

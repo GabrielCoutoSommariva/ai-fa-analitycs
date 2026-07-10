@@ -14,6 +14,9 @@ type Message = {
   content: string
 }
 
+const INITIAL_ASSISTANT_MESSAGE = "Oi, sou o assistente BI. Pergunte sobre faturamento, lojas, ticket médio, margem ou produtos. Vou usar o período filtrado no dashboard."
+const HISTORY_LIMIT = 12
+
 const suggestions = [
   "Quanto vendi no período?",
   "Qual loja vendeu mais?",
@@ -50,36 +53,61 @@ function MessageContent({ content }: { content: string }) {
   return <div className="message-content">{lines.map((line) => <p key={line}>{renderInline(line)}</p>)}</div>
 }
 
+function createThreadId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function buildHistory(messages: Message[]): AiHistoryMessage[] {
+  return messages
+    .filter((message) => message.content.trim() && message.content !== INITIAL_ASSISTANT_MESSAGE)
+    .slice(-HISTORY_LIMIT)
+    .map((message) => ({ role: message.role, content: message.content }))
+}
+
 export function AiChat({ filters }: { filters: DateFilters }) {
   const [isOpen, setIsOpen] = useState(false)
   const [question, setQuestion] = useState("")
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Oi, sou o assistente BI. Pergunte sobre faturamento, lojas, ticket médio, margem ou produtos. Vou usar o período filtrado no dashboard." }
+    { role: "assistant", content: INITIAL_ASSISTANT_MESSAGE }
   ])
   const [isLoading, setIsLoading] = useState(false)
+  const threadIdRef = useRef(createThreadId())
+  const messagesStateRef = useRef<Message[]>(messages)
   const messagesRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    messagesStateRef.current = messages
+  }, [messages])
 
   useEffect(() => {
     messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight, behavior: "smooth" })
   }, [messages, isOpen])
 
+  function appendMessage(message: Message) {
+    setMessages((current) => {
+      const next = [...current, message]
+      messagesStateRef.current = next
+      return next
+    })
+  }
+
   async function submit(value = question) {
+    if (isLoading) return
     const clean = value.trim()
     if (!clean) return
+    const history = buildHistory(messagesStateRef.current)
     setQuestion("")
     resetTextarea()
     setIsLoading(true)
-    setMessages((current) => [...current, { role: "user", content: clean }])
+    appendMessage({ role: "user", content: clean })
     try {
-      const history: AiHistoryMessage[] = messages
-        .slice(-12)
-        .map((message) => ({ role: message.role, content: message.content }))
-      const route = await api.ask(clean, filters, history)
+      const route = await api.ask(clean, filters, history, threadIdRef.current)
       const content = route.answer ?? (route.status === "answered" ? "Pergunta respondida." : route.message ?? "Não consegui responder.")
-      setMessages((current) => [...current, { role: "assistant", content }])
+      appendMessage({ role: "assistant", content })
     } catch (error) {
-      setMessages((current) => [...current, { role: "assistant", content: error instanceof Error ? error.message : "Erro ao analisar pergunta." }])
+      appendMessage({ role: "assistant", content: error instanceof Error ? error.message : "Erro ao analisar pergunta." })
     } finally {
       setIsLoading(false)
     }
@@ -126,7 +154,7 @@ export function AiChat({ filters }: { filters: DateFilters }) {
       </div>
 
       <div className="suggestions">
-        {suggestions.map((item) => <button key={item} onClick={() => submit(item)}>{item}</button>)}
+        {suggestions.map((item) => <button key={item} disabled={isLoading} onClick={() => submit(item)}>{item}</button>)}
       </div>
 
       <div className="messages" ref={messagesRef}>

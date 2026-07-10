@@ -1,13 +1,174 @@
 from datetime import date
 from decimal import Decimal
 import re
-from typing import Any
+from time import monotonic
+from typing import Any, Literal
+import unicodedata
 
 from app.db import execute_select
 from app.services.openai_service import answer_with_kpis, has_openai_key, summarize_with_openai
 from app.services.periods import parse_period
 from app.services.semantic import find_question_route
 from app.sql_guard import is_safe_select, template_to_psycopg
+
+
+KPI_CONTEXT_CACHE_SECONDS = 300
+_kpi_context_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+PRODUCT_ANSWER_CACHE_SECONDS = 120
+_product_answer_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+LIST_TEXT_LIMIT = 50
+
+
+KPI_DEFINITIONS: dict[str, dict[str, str]] = {
+    "faturamento": {
+        "label": "Faturamento liquido",
+        "formula": "sum(faturamento_liquido), onde faturamento_liquido = vlr_liquido - vlr_devolucao.",
+        "source": "analytics.mv_kpi_faturamento_diario",
+    },
+    "faturamento_por_loja": {
+        "label": "Faturamento por loja",
+        "formula": "sum(faturamento_liquido) agrupado por loja_id.",
+        "source": "analytics.mv_kpi_faturamento_loja",
+    },
+    "ticket_medio": {
+        "label": "Ticket medio",
+        "formula": "sum(faturamento_liquido) / sum(qtd_cupons).",
+        "source": "analytics.mv_kpi_faturamento_diario",
+    },
+    "margem": {
+        "label": "Margem bruta estimada",
+        "formula": "sum(lucro_bruto_total) / sum(receita_liquida_item), com lucro_bruto_total = receita_liquida_item - CMV estimado.",
+        "source": "analytics.mv_kpi_lucro_total_diario",
+    },
+    "cmv": {
+        "label": "CMV estimado",
+        "formula": "sum(custo_total_estimado) / sum(receita_liquida_item) para percentual; valor absoluto = sum(custo_total_estimado).",
+        "source": "analytics.mv_kpi_lucro_total_diario",
+    },
+    "desconto_usuario": {
+        "label": "Desconto usuario",
+        "formula": "sum(desconto_manual) / sum(receita_liquida_item).",
+        "source": "analytics.mv_kpi_operacional_diario",
+    },
+    "desconto_automatico": {
+        "label": "Desconto automatico",
+        "formula": "sum(desconto_automatico) / sum(receita_liquida_item).",
+        "source": "analytics.mv_kpi_operacional_diario",
+    },
+    "desconto_cmv": {
+        "label": "Desconto / CMV",
+        "formula": "sum(desconto_total) / sum(custo_total_estimado).",
+        "source": "analytics.mv_kpi_operacional_diario",
+    },
+    "cupons_um_item": {
+        "label": "Cupons com 1 item",
+        "formula": "sum(cupons_um_item) / sum(total_cupons).",
+        "source": "analytics.mv_kpi_operacional_diario",
+    },
+    "descontos_devolucoes": {
+        "label": "Descontos e devolucoes",
+        "formula": "descontos e devolucoes sao somados no periodo e comparados contra a base de faturamento/venda bruta aproximada indicada na resposta.",
+        "source": "analytics.mv_ai_desconto_devolucao_diario e analytics.mv_ai_desconto_devolucao_produto_mensal",
+    },
+    "dre": {
+        "label": "DRE parcial/gerencial",
+        "formula": "receita liquida analisada - CMV estimado = lucro bruto estimado. Nao inclui DRE contabil completa.",
+        "source": "analytics.mv_kpi_lucro_total_diario",
+    },
+}
+
+
+PHARMACY_BUSINESS_SCOPE_KEYWORDS = [
+    "farmacia",
+    "farmacias",
+    "drogaria",
+    "medicamento",
+    "medicamentos",
+    "pdv",
+    "balcao",
+    "balconista",
+    "atendimento",
+    "loja",
+    "lojas",
+    "venda",
+    "vendas",
+    "faturamento",
+    "receita",
+    "cupom",
+    "ticket",
+    "cliente",
+    "clientes",
+    "produto",
+    "produtos",
+    "estoque",
+    "ruptura",
+    "giro",
+    "margem",
+    "cmv",
+    "lucro",
+    "dre",
+    "desconto",
+    "devolucao",
+    "vendedor",
+    "vendedores",
+    "equipe",
+    "compra",
+    "compras",
+    "fornecedor",
+    "fornecedores",
+    "preco",
+    "precificacao",
+    "promocao",
+    "campanha",
+    "campanhas",
+    "marketing",
+    "crescimento",
+    "crescer",
+    "negocio",
+    "business",
+    "gestao",
+    "estrategia",
+    "estrategico",
+    "desenvolvimento",
+    "performance",
+    "meta",
+    "indicador",
+    "kpi",
+    "concorrente",
+    "bairro",
+    "sazonalidade",
+]
+
+
+CLEAR_OUT_OF_SCOPE_PATTERNS = [
+    "origem da vida",
+    "sentido da vida",
+    "vida apos a morte",
+    "deus existe",
+    "religiao",
+    "horoscopo",
+    "signo",
+    "previsao do tempo",
+    "clima hoje",
+    "futebol",
+    "placar do jogo",
+    "filme",
+    "serie de tv",
+    "musica",
+    "celebridade",
+    "fofoca",
+    "receita de bolo",
+    "segunda guerra",
+    "guerra mundial",
+    "historia do brasil",
+    "politica partidaria",
+    "eleicao presidencial",
+    "presidente do brasil",
+    "hackear",
+    "bomba",
+    "arma de fogo",
+    "drogas ilicitas",
+]
 
 
 def serialize(value: Any) -> Any:
@@ -74,9 +235,28 @@ def execute_optional_select(sql: str, params: dict[str, Any]) -> list[dict[str, 
         return []
 
 
+def kpi_context_cache_key(data_inicio: date, data_fim: date, cnpj: str | None, authorized_cnpjs: list[str] | None) -> tuple[Any, ...]:
+    return (
+        data_inicio.isoformat(),
+        data_fim.isoformat(),
+        normalize_cnpj(cnpj),
+        tuple(sorted(scoped_cnpjs(authorized_cnpjs))) if authorized_cnpjs is not None else None,
+    )
+
+
+def scoped_cache_part(cnpj: str | None, authorized_cnpjs: list[str] | None) -> tuple[Any, ...]:
+    return (normalize_cnpj(cnpj), tuple(sorted(scoped_cnpjs(authorized_cnpjs))) if authorized_cnpjs is not None else None)
+
+
 def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str | None = None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
     if not data_inicio or not data_fim:
         return {"periodo": {"data_inicio": serialize(data_inicio), "data_fim": serialize(data_fim)}, "erro": "periodo ausente"}
+
+    cache_key = kpi_context_cache_key(data_inicio, data_fim, cnpj, authorized_cnpjs)
+    cached = _kpi_context_cache.get(cache_key)
+    now = monotonic()
+    if cached and now - cached[0] <= KPI_CONTEXT_CACHE_SECONDS:
+        return cached[1]
 
     params: dict[str, Any] = {"data_inicio": data_inicio, "data_fim": data_fim}
     loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
@@ -117,7 +297,6 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     where data between %(data_inicio)s and %(data_fim)s {loja_filter}
     group by loja_id
     order by faturamento desc
-    limit 10
     """
     profit_sql = f"""
     select produto_id, max(produto) as produto, sum(qtd_vendida) as qtd, sum(receita_liquida_item) as receita, sum(custo_total_estimado) as custo, sum(lucro_bruto_estimado) as lucro
@@ -125,7 +304,7 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     where data between %(data_inicio)s and %(data_fim)s {loja_filter}
     group by produto_id
     order by lucro desc
-    limit 10
+    limit 50
     """
     loss_sql = f"""
     select produto_id, max(produto) as produto, sum(qtd_vendida) as qtd, sum(receita_liquida_item) as receita, sum(custo_total_estimado) as custo, sum(lucro_bruto_estimado) as lucro
@@ -220,7 +399,6 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     where data between %(data_inicio)s and %(data_fim)s {loja_filter}
     group by hora
     order by faturamento desc
-    limit 10
     """
     seasonality_sql = f"""
     select
@@ -398,38 +576,27 @@ def build_kpi_context(data_inicio: date | None, data_fim: date | None, cnpj: str
     limit 10
     """
 
-    return serialize({
+    context = serialize({
         "periodo": {"data_inicio": data_inicio, "data_fim": data_fim, "cnpj": cnpj, "cnpjs_autorizados": authorized_cnpjs},
         "resumo": execute_select(summary_sql, params)[0],
-        "executivo": (execute_optional_select(executive_sql, params) or [{}])[0],
         "faturamento_mensal": execute_select(monthly_sql, params),
-        "top_lojas": execute_select(stores_sql, params),
-        "produtos_mais_lucrativos": execute_select(profit_sql, params),
-        "produtos_com_prejuizo": execute_select(loss_sql, params),
+        "lojas": execute_select(stores_sql, params),
         "tendencia_diaria": execute_select(trend_sql, params),
-        "ranking_vendedores": execute_optional_select(sellers_sql, params),
-        "vendas_por_horario": execute_optional_select(hourly_sql, params),
-        "sazonalidade_dia_semana": execute_optional_select(seasonality_sql, params),
-        "alertas_operacionais": execute_optional_select(alerts_sql, params),
-        "clientes": (execute_optional_select(customers_sql, params) or [{}])[0],
-        "clientes_vip": execute_optional_select(vip_customers_sql, params),
-        "produtos_estrategicos": execute_optional_select(strategic_products_sql, params),
-        "tendencias_produtos": execute_optional_select(product_trends_sql, params),
-        "descontos_devolucoes": (execute_optional_select(discounts_sql, params) or [{}])[0],
-        "produtos_com_desconto_devolucao": execute_optional_select(discount_return_products_sql, params),
         "observacoes": [
             "faturamento = vlr_liquido - vlr_devolucao",
             "faturamento_mensal contem ate os ultimos 36 meses do periodo filtrado, em ordem cronologica",
             "lucro e margem sao estimados a partir dos custos disponiveis",
+            "lojas lista todas as lojas autorizadas do usuario que tiveram consolidacao no periodo",
+            "perguntas detalhadas de produtos, vendedores, horarios, sazonalidade, clientes, descontos e alertas usam rotas especializadas para nao pesar o contexto generico",
             "KPIs executivos AI-only ignoram vendas com data futura",
-            "vendedor usa itens da venda e pode diferir do atendente do cabecalho",
-            "clientes dependem de cliente_id preenchido na venda",
-            "curva ABC de produtos e tendencias usam meses dentro do periodo selecionado",
-            "sazonalidade por dia da semana usa vendas agrupadas por data e loja",
-            "descontos e devolucoes usam campos do cabecalho e dos itens de venda disponiveis no banco",
             "use o periodo selecionado como referencia quando a pergunta for vaga",
         ],
     })
+    _kpi_context_cache[cache_key] = (now, context)
+    if len(_kpi_context_cache) > 256:
+        oldest_key = min(_kpi_context_cache, key=lambda key: _kpi_context_cache[key][0])
+        _kpi_context_cache.pop(oldest_key, None)
+    return context
 
 
 def local_answer(route: dict[str, Any], rows: list[dict[str, Any]]) -> str:
@@ -480,9 +647,135 @@ def format_percent(value: Any) -> str:
     return formatted.replace(",", "_").replace(".", ",").replace("_", ".") + "%"
 
 
+def normalize_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKD", value.lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def is_pharmacy_business_scope(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(keyword in normalized for keyword in PHARMACY_BUSINESS_SCOPE_KEYWORDS)
+
+
+def is_clear_out_of_scope_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    if not normalized:
+        return False
+    if is_pharmacy_business_scope(normalized):
+        return False
+    return any(pattern in normalized for pattern in CLEAR_OUT_OF_SCOPE_PATTERNS)
+
+
+def answer_out_of_scope(question: str, data_inicio: date | None, data_fim: date | None) -> dict[str, Any]:
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": (
+            "Nao vou responder esse tema porque ele foge do escopo do assistente BI para farmacias. "
+            "Posso ajudar com vendas, faturamento, margem, produtos, lojas, atendimento, campanhas, crescimento "
+            "e estrategias de negocio para farmacias."
+        ),
+        "openai_enabled": has_openai_key(),
+        "rows": [],
+        "route": {"status": "scope_blocked", "intent": "fora_escopo"},
+        "params": serialize({"data_inicio": data_inicio, "data_fim": data_fim}),
+    }
+
+
+def is_formula_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(term in normalized for term in ["como calcul", "qual formula", "formula", "criterio", "regra", "de onde vem"])
+
+
+def is_network_question(question: str) -> bool:
+    normalized = normalize_text(question)
+    return any(term in normalized for term in ["rede", "media geral", "geral do banco"])
+
+
+def resolve_operational_metric(question: str) -> str | None:
+    normalized = normalize_text(question)
+    if "cupom" in normalized and any(term in normalized for term in ["1 item", "um item", "item unico"]):
+        return "cupons_um_item"
+    if "desconto" not in normalized:
+        return None
+    if "cmv" in normalized:
+        return "desconto_cmv"
+    if any(term in normalized for term in ["automatico", "auto"]):
+        return "desconto_automatico"
+    if any(term in normalized for term in ["usuario", "manual", "balcao"]):
+        return "desconto_usuario"
+    return None
+
+
+def classify_topic(text: str | None) -> str | None:
+    if not text:
+        return None
+    normalized = normalize_text(text)
+    operational_metric = resolve_operational_metric(normalized)
+    if operational_metric:
+        return operational_metric
+    if "ticket" in normalized or "cupom medio" in normalized:
+        return "ticket_medio"
+    if "desconto" in normalized or "devolucao" in normalized:
+        return "descontos_devolucoes"
+    if "dre" in normalized or "demonstrativo" in normalized:
+        return "dre"
+    if "margem" in normalized or "lucro bruto" in normalized:
+        return "margem"
+    if "cmv" in normalized or "custo da mercadoria" in normalized or "custo mercadoria" in normalized:
+        return "cmv"
+    if "loja" in normalized or "filial" in normalized:
+        if any(term in normalized for term in ["faturamento", "faturou", "vendi", "vendeu", "vendas", "receita", "loja que mais", "loja com menor"]):
+            return "faturamento_por_loja"
+    if any(term in normalized for term in ["faturamento", "faturou", "vendi", "vendeu", "vendas", "receita"]):
+        return "faturamento"
+    return None
+
+
+def last_history_topic(question: str, history: list[dict[str, str]] | None) -> str | None:
+    current_topic = classify_topic(question)
+    if current_topic:
+        return current_topic
+    for message in reversed(history or []):
+        topic = classify_topic(message.get("content"))
+        if topic:
+            return topic
+    return None
+
+
+def answer_formula(question: str, topic: str | None, data_inicio: date | None, data_fim: date | None) -> dict[str, Any]:
+    definition = KPI_DEFINITIONS.get(topic or "")
+    if not definition:
+        answer = "Ainda nao identifiquei qual KPI voce quer detalhar. Pergunte, por exemplo: 'como calculou o faturamento?' ou 'como calculou a margem?'."
+    else:
+        answer = f"{definition['label']}: {definition['formula']} Fonte: {definition['source']}."
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": [],
+        "route": {"status": "local_followup", "intent": "formula", "topic": topic},
+        "params": serialize({"data_inicio": data_inicio, "data_fim": data_fim}),
+    }
+
+
+def limited_list_note(total: int, shown: int) -> str:
+    if total <= shown:
+        return ""
+    return f" Encontrei {total} itens; listei os {shown} principais para evitar uma resposta pesada. Refine por loja ou periodo para detalhar mais."
+
+
 def has_revenue_word(question: str) -> bool:
     normalized = question.lower()
     return any(word in normalized for word in ["faturamento", "faturou", "vendi", "vendeu", "vendas", "receita"])
+
+
+def has_list_word(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["liste", "listar", "lista", "todos", "todas", "relacao", "relação", "ranking"])
 
 
 def is_monthly_revenue_series(question: str) -> bool:
@@ -500,8 +793,13 @@ def is_daily_revenue_series(question: str) -> bool:
 def is_store_revenue_question(question: str) -> bool:
     normalized = question.lower()
     store_words = ["loja", "lojas", "jola", "jolas", "filial", "filiais"]
-    ranking_words = ["mais", "maior", "melhor", "top", "ranking", "por"]
-    return any(word in normalized for word in store_words) and (has_revenue_word(normalized) or any(word in normalized for word in ranking_words))
+    ranking_words = ["mais", "maior", "melhor", "top", "ranking", "por", "pior", "menor", "menos", "fraca", "fraco", "baixo", "baixa"]
+    return any(word in normalized for word in store_words) and (has_revenue_word(normalized) or has_list_word(normalized) or any(word in normalized for word in ranking_words))
+
+
+def is_worst_store_question(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["pior", "menor", "menos", "fraca", "fraco", "baixo", "baixa"])
 
 
 def is_total_revenue_question(question: str) -> bool:
@@ -510,18 +808,130 @@ def is_total_revenue_question(question: str) -> bool:
     return has_revenue_word(normalized) and any(word in normalized for word in total_words)
 
 
+def is_ticket_question(question: str) -> bool:
+    normalized = question.lower()
+    return "ticket" in normalized or "cupom medio" in normalized or "cupom médio" in normalized
+
+
+def is_goal_question(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["meta", "metas", "orcado", "orçado", "objetivo"])
+
+
+def answer_goal_unavailable(question: str, data_inicio: date | None, data_fim: date | None) -> dict[str, Any]:
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": "Nao ha meta cadastrada na base analitica atual. Posso comparar o periodo selecionado com o periodo anterior ou com a media historica, mas nao devo tratar isso como meta oficial.",
+        "openai_enabled": has_openai_key(),
+        "rows": [],
+        "route": {"status": "guardrail_matched", "intent": "meta_indisponivel"},
+        "params": serialize({"data_inicio": data_inicio, "data_fim": data_fim}),
+    }
+
+
+def is_dre_question(question: str) -> bool:
+    normalized = question.lower()
+    return "dre" in normalized or "demonstrativo" in normalized or "resultado gerencial" in normalized
+
+
+def is_cmv_question(question: str) -> bool:
+    normalized = question.lower()
+    return "cmv" in normalized or "custo da mercadoria" in normalized or "custo mercadoria" in normalized
+
+
+def answer_margin_summary(
+    question: str,
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    authorized_cnpjs: list[str] | None = None,
+    mode: Literal["cmv", "dre"] = "cmv",
+) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para calcular CMV ou DRE gerencial, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "guardrail_matched", "intent": mode},
+            "params": serialize(params),
+        }
+
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      coalesce(sum(receita_liquida_item), 0) as receita_liquida,
+      coalesce(sum(custo_total_estimado), 0) as cmv_estimado,
+      coalesce(sum(lucro_bruto_total), 0) as lucro_bruto_estimado,
+      case when sum(receita_liquida_item) = 0 then null else sum(custo_total_estimado) / sum(receita_liquida_item) end as cmv_percentual,
+      case when sum(receita_liquida_item) = 0 then null else sum(lucro_bruto_total) / sum(receita_liquida_item) end as margem_bruta
+    from analytics.mv_kpi_lucro_total_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    first = rows[0] if rows else {}
+    cmv_pct = float(first.get("cmv_percentual") or 0) * 100
+    margin_pct = float(first.get("margem_bruta") or 0) * 100
+    if mode == "dre":
+        answer = (
+            "DRE contabil completa nao esta disponivel na base atual porque faltam contas como despesas operacionais, impostos detalhados e resultado financeiro. "
+            f"DRE parcial/gerencial do periodo {params['data_inicio']} a {params['data_fim']}: "
+            f"receita liquida analisada {format_brl(first.get('receita_liquida'))}, "
+            f"CMV estimado {format_brl(first.get('cmv_estimado'))} ({format_percent(cmv_pct)}), "
+            f"lucro bruto estimado {format_brl(first.get('lucro_bruto_estimado'))} e margem bruta estimada {format_percent(margin_pct)}."
+        )
+    else:
+        answer = (
+            f"CMV percentual estimado: {format_percent(cmv_pct)} no periodo de {params['data_inicio']} a {params['data_fim']}. "
+            f"Calculo padronizado: custo_total_estimado / receita_liquida_item. Base: CMV {format_brl(first.get('cmv_estimado'))} "
+            f"sobre receita liquida analisada de {format_brl(first.get('receita_liquida'))}."
+        )
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "guardrail_matched", "intent": mode},
+        "params": serialize(params),
+        "sql": sql,
+    }
+
+
 def is_seller_question(question: str) -> bool:
     normalized = question.lower()
     seller_words = ["vendedor", "vendedores", "colaborador", "colaboradores", "equipe", "operador", "operadores"]
-    performance_words = ["vendeu", "vendas", "ranking", "ticket", "margem", "lucro", "desconto", "devolucao", "devolução", "performance", "desempenho", "sku"]
-    return any(word in normalized for word in seller_words) and any(word in normalized for word in performance_words)
+    performance_words = ["vendeu", "venderam", "vende", "vendas", "mais", "maior", "melhor", "top", "ranking", "ticket", "margem", "lucro", "desconto", "devolucao", "devolução", "performance", "desempenho", "sku"]
+    return any(word in normalized for word in seller_words) and (has_list_word(normalized) or any(word in normalized for word in performance_words))
+
+
+def is_seller_margin_question(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["margem", "lucro", "prejuizo", "prejuízo", "sem margem"])
+
+
+def is_low_margin_question(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["sem margem", "prejuizo", "prejuízo", "negativo", "negativa", "pior", "menor", "baixo", "baixa"])
+
+
+def is_high_margin_question(question: str) -> bool:
+    normalized = question.lower()
+    return any(word in normalized for word in ["maior", "melhor", "mais", "alto", "alta"])
 
 
 def is_hour_question(question: str) -> bool:
     normalized = question.lower()
     hour_words = ["horario", "horário", "hora", "horas", "faixa", "manha", "manhã", "tarde", "noite", "madrugada"]
-    movement_words = ["vende", "vendeu", "vendas", "faturamento", "movimento", "cupons", "ticket", "reforcar", "reforçar"]
-    return any(word in normalized for word in hour_words) and any(word in normalized for word in movement_words)
+    movement_words = ["vende", "vendo", "vendeu", "vendas", "mais", "maior", "melhor", "top", "faturamento", "movimento", "cupons", "ticket", "reforcar", "reforçar"]
+    return any(word in normalized for word in hour_words) and (has_list_word(normalized) or any(word in normalized for word in movement_words))
 
 
 def is_seasonality_question(question: str) -> bool:
@@ -543,7 +953,7 @@ def is_seasonality_question(question: str) -> bool:
     ]
     metric_words = ["vende", "vendeu", "vendas", "faturamento", "cupons", "ticket", "melhor", "pior", "movimento"]
     product_words = ["produto", "produtos", "sku", "item", "itens"]
-    return any(word in normalized for word in day_words) and any(word in normalized for word in metric_words) and not any(word in normalized for word in product_words)
+    return any(word in normalized for word in day_words) and (has_list_word(normalized) or any(word in normalized for word in metric_words)) and not any(word in normalized for word in product_words)
 
 
 def is_alert_question(question: str) -> bool:
@@ -605,12 +1015,12 @@ def answer_seasonality(question: str, data_inicio: date | None, data_fim: date |
     else:
         best = rows[0]
         worst = rows[-1]
-        parts = [f"{row.get('nome_dia_semana')}: {format_brl(row.get('faturamento'))}" for row in rows[:5]]
+        parts = [f"{row.get('nome_dia_semana')}: {format_brl(row.get('faturamento'))}" for row in rows]
         answer = (
             f"O melhor dia da semana foi {best.get('nome_dia_semana')}, com {format_brl(best.get('faturamento'))} "
             f"e ticket medio de {format_brl(best.get('ticket_medio'))}. "
             f"O dia mais fraco foi {worst.get('nome_dia_semana')}, com {format_brl(worst.get('faturamento'))}. "
-            "Top dias: " + "; ".join(parts) + "."
+            "Dias retornados: " + "; ".join(parts) + "."
         )
 
     return {
@@ -674,7 +1084,7 @@ def answer_discounts_returns(question: str, data_inicio: date | None, data_fim: 
     {loja_filter}
     group by produto_id
     order by valor_devolucao desc, desconto_total desc
-    limit 10
+    limit 50
     """
     daily_sql = f"""
     select
@@ -717,11 +1127,351 @@ def answer_discounts_returns(question: str, data_inicio: date | None, data_fim: 
     }
 
 
+def operational_summary_row(data_inicio: date, data_fim: date, cnpj: str | None = None, authorized_cnpjs: list[str] | None = None) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    params: dict[str, Any] = {"data_inicio": data_inicio, "data_fim": data_fim}
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      coalesce(sum(total_cupons), 0) as total_cupons,
+      coalesce(sum(cupons_um_item), 0) as cupons_um_item,
+      case when sum(total_cupons) = 0 then null else sum(cupons_um_item)::numeric / sum(total_cupons) end as percentual_cupons_um_item,
+      coalesce(sum(desconto_manual), 0) as desconto_manual,
+      coalesce(sum(desconto_automatico), 0) as desconto_automatico,
+      coalesce(sum(desconto_total), 0) as desconto_total,
+      coalesce(sum(receita_liquida_item), 0) as receita_liquida_item,
+      coalesce(sum(custo_total_estimado), 0) as custo_total_estimado,
+      case when sum(receita_liquida_item) = 0 then null else sum(desconto_manual) / sum(receita_liquida_item) end as percentual_desconto_manual,
+      case when sum(receita_liquida_item) = 0 then null else sum(desconto_automatico) / sum(receita_liquida_item) end as percentual_desconto_automatico,
+      case when sum(custo_total_estimado) = 0 then null else sum(desconto_total) / sum(custo_total_estimado) end as percentual_desconto_cmv
+    from analytics.mv_kpi_operacional_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    return (rows[0] if rows else {}, sql, params)
+
+
+def answer_operational_kpi(
+    question: str,
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    authorized_cnpjs: list[str] | None = None,
+    metric_key: str | None = None,
+) -> dict[str, Any]:
+    metric_key = metric_key or resolve_operational_metric(question)
+    params = parse_period(question, data_inicio, data_fim)
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para calcular o indicador operacional, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": metric_key or "operacional"},
+            "params": serialize(params),
+        }
+
+    row, sql, query_params = operational_summary_row(params["data_inicio"], params["data_fim"], cnpj, authorized_cnpjs)
+    if metric_key == "desconto_usuario":
+        pct = float(row.get("percentual_desconto_manual") or 0) * 100
+        answer = (
+            f"Desconto usuario: {format_percent(pct)} no periodo de {params['data_inicio']} a {params['data_fim']}. "
+            f"Base: {format_brl(row.get('desconto_manual'))} de desconto manual sobre {format_brl(row.get('receita_liquida_item'))} de receita liquida analisada."
+        )
+    elif metric_key == "desconto_automatico":
+        pct = float(row.get("percentual_desconto_automatico") or 0) * 100
+        answer = (
+            f"Desconto automatico: {format_percent(pct)} no periodo de {params['data_inicio']} a {params['data_fim']}. "
+            f"Base: {format_brl(row.get('desconto_automatico'))} de desconto automatico sobre {format_brl(row.get('receita_liquida_item'))} de receita liquida analisada."
+        )
+    elif metric_key == "desconto_cmv":
+        pct = float(row.get("percentual_desconto_cmv") or 0) * 100
+        answer = (
+            f"Desconto / CMV: {format_percent(pct)} no periodo de {params['data_inicio']} a {params['data_fim']}. "
+            f"Base: {format_brl(row.get('desconto_total'))} de desconto total sobre {format_brl(row.get('custo_total_estimado'))} de CMV estimado."
+        )
+    elif metric_key == "cupons_um_item":
+        pct = float(row.get("percentual_cupons_um_item") or 0) * 100
+        answer = (
+            f"Cupons com 1 item: {format_percent(pct)} no periodo de {params['data_inicio']} a {params['data_fim']}. "
+            f"Base: {format_int(row.get('cupons_um_item'))} cupons com 1 item sobre {format_int(row.get('total_cupons'))} cupons totais."
+        )
+    else:
+        pct = float(row.get("percentual_desconto_manual") or 0) * 100
+        answer = (
+            f"Desconto usuario: {format_percent(pct)}. Para detalhar, pergunte por desconto usuario, automatico, desconto / CMV ou cupons com 1 item."
+        )
+        metric_key = "desconto_usuario"
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": [row],
+        "route": {"status": "consultative_matched", "intent": metric_key},
+        "params": serialize(query_params),
+        "sql": sql,
+    }
+
+
+def revenue_summary_row(data_inicio: date, data_fim: date, cnpj: str | None = None, authorized_cnpjs: list[str] | None = None) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    params: dict[str, Any] = {"data_inicio": data_inicio, "data_fim": data_fim}
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      coalesce(sum(faturamento_liquido), 0) as faturamento,
+      coalesce(sum(qtd_cupons), 0) as cupons,
+      count(distinct loja_id) filter (where faturamento_liquido <> 0) as lojas_com_faturamento,
+      case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio,
+      case when count(distinct loja_id) filter (where faturamento_liquido <> 0) = 0 then 0 else sum(faturamento_liquido) / count(distinct loja_id) filter (where faturamento_liquido <> 0) end as faturamento_medio_loja
+    from analytics.mv_kpi_faturamento_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    return (rows[0] if rows else {}, sql, params)
+
+
+def margin_summary_row(data_inicio: date, data_fim: date, cnpj: str | None = None, authorized_cnpjs: list[str] | None = None) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    params: dict[str, Any] = {"data_inicio": data_inicio, "data_fim": data_fim}
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      coalesce(sum(receita_liquida_item), 0) as receita_liquida,
+      coalesce(sum(custo_total_estimado), 0) as cmv_estimado,
+      coalesce(sum(lucro_bruto_total), 0) as lucro_bruto_estimado,
+      case when sum(receita_liquida_item) = 0 then null else sum(custo_total_estimado) / sum(receita_liquida_item) end as cmv_percentual,
+      case when sum(receita_liquida_item) = 0 then null else sum(lucro_bruto_total) / sum(receita_liquida_item) end as margem_bruta
+    from analytics.mv_kpi_lucro_total_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    return (rows[0] if rows else {}, sql, params)
+
+
+def answer_network_comparison(
+    question: str,
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    authorized_cnpjs: list[str] | None,
+    topic: str | None,
+) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para comparar com a rede, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "local_followup", "intent": "rede", "topic": topic},
+            "params": serialize(params),
+        }
+
+    start = params["data_inicio"]
+    end = params["data_fim"]
+    comparison_topic = "faturamento" if topic == "faturamento_por_loja" else topic
+    if comparison_topic == "faturamento":
+        user_row, sql, query_params = revenue_summary_row(start, end, cnpj, authorized_cnpjs)
+        network_row, _, _ = revenue_summary_row(start, end)
+        answer = (
+            f"No seu filtro, o faturamento foi {format_brl(user_row.get('faturamento'))}. "
+            f"Na rede geral do BI, o faturamento total foi {format_brl(network_row.get('faturamento'))}; "
+            f"a media por loja com faturamento foi {format_brl(network_row.get('faturamento_medio_loja'))} "
+            f"em {format_int(network_row.get('lojas_com_faturamento'))} lojas com faturamento."
+        )
+        rows = [{"usuario": user_row, "rede": network_row}]
+    elif comparison_topic == "ticket_medio":
+        user_row, sql, query_params = revenue_summary_row(start, end, cnpj, authorized_cnpjs)
+        network_row, _, _ = revenue_summary_row(start, end)
+        answer = (
+            f"No seu filtro, o ticket medio foi {format_brl(user_row.get('ticket_medio'))}. "
+            f"Na rede geral do BI, o ticket medio foi {format_brl(network_row.get('ticket_medio'))}. "
+            f"Base rede: {format_int(network_row.get('cupons'))} cupons e {format_brl(network_row.get('faturamento'))} de faturamento."
+        )
+        rows = [{"usuario": user_row, "rede": network_row}]
+    elif comparison_topic in {"margem", "cmv"}:
+        user_row, sql, query_params = margin_summary_row(start, end, cnpj, authorized_cnpjs)
+        network_row, _, _ = margin_summary_row(start, end)
+        if comparison_topic == "cmv":
+            answer = (
+                f"No seu filtro, o CMV estimado foi {format_brl(user_row.get('cmv_estimado'))} "
+                f"({format_percent(float(user_row.get('cmv_percentual') or 0) * 100)} da receita analisada). "
+                f"Na rede geral do BI, o CMV estimado foi {format_brl(network_row.get('cmv_estimado'))} "
+                f"({format_percent(float(network_row.get('cmv_percentual') or 0) * 100)})."
+            )
+        else:
+            answer = (
+                f"No seu filtro, a margem bruta estimada foi {format_percent(float(user_row.get('margem_bruta') or 0) * 100)}. "
+                f"Na rede geral do BI, a margem bruta estimada foi {format_percent(float(network_row.get('margem_bruta') or 0) * 100)}. "
+                f"A conta usa soma de lucro bruto sobre soma de receita, nao media simples de margens."
+            )
+        rows = [{"usuario": user_row, "rede": network_row}]
+    elif comparison_topic in {"desconto_usuario", "desconto_automatico", "desconto_cmv", "cupons_um_item"}:
+        user_row, sql, query_params = operational_summary_row(start, end, cnpj, authorized_cnpjs)
+        network_row, _, _ = operational_summary_row(start, end)
+        if comparison_topic == "desconto_usuario":
+            answer = (
+                f"No seu filtro, o desconto usuario foi {format_percent(float(user_row.get('percentual_desconto_manual') or 0) * 100)} "
+                f"({format_brl(user_row.get('desconto_manual'))}). Na rede geral do BI, foi "
+                f"{format_percent(float(network_row.get('percentual_desconto_manual') or 0) * 100)}."
+            )
+        elif comparison_topic == "desconto_automatico":
+            answer = (
+                f"No seu filtro, o desconto automatico foi {format_percent(float(user_row.get('percentual_desconto_automatico') or 0) * 100)} "
+                f"({format_brl(user_row.get('desconto_automatico'))}). Na rede geral do BI, foi "
+                f"{format_percent(float(network_row.get('percentual_desconto_automatico') or 0) * 100)}."
+            )
+        elif comparison_topic == "desconto_cmv":
+            answer = (
+                f"No seu filtro, desconto / CMV foi {format_percent(float(user_row.get('percentual_desconto_cmv') or 0) * 100)}. "
+                f"Na rede geral do BI, foi {format_percent(float(network_row.get('percentual_desconto_cmv') or 0) * 100)}."
+            )
+        else:
+            answer = (
+                f"No seu filtro, cupons com 1 item foram {format_percent(float(user_row.get('percentual_cupons_um_item') or 0) * 100)} "
+                f"({format_int(user_row.get('cupons_um_item'))} de {format_int(user_row.get('total_cupons'))}). "
+                f"Na rede geral do BI, foram {format_percent(float(network_row.get('percentual_cupons_um_item') or 0) * 100)}."
+            )
+        rows = [{"usuario": user_row, "rede": network_row}]
+    else:
+        answer = "Consigo comparar com a rede para faturamento, ticket medio, margem, CMV, descontos operacionais e cupons com 1 item. Refaca indicando um desses KPIs."
+        sql = ""
+        query_params = {"data_inicio": start, "data_fim": end}
+        rows = []
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "local_followup", "intent": "rede", "topic": comparison_topic},
+        "params": serialize(query_params),
+        "sql": sql,
+    }
+
+
 def is_product_strategy_question(question: str) -> bool:
     normalized = question.lower()
     product_words = ["produto", "produtos", "sku", "itens"]
     strategy_words = ["abc", "curva", "lider", "líder", "lideres", "líderes", "crescimento", "crescendo", "queda", "caindo", "sazonal", "sazonalidade", "estrategico", "estratégico"]
     return any(word in normalized for word in product_words) and any(word in normalized for word in strategy_words)
+
+
+def is_product_loss_question(question: str) -> bool:
+    normalized = question.lower()
+    product_words = ["produto", "produtos", "sku", "item", "itens"]
+    loss_words = ["prejuizo", "prejuízo", "perda", "perdas", "negativo", "negativos", "margem negativa", "sem margem"]
+    return any(word in normalized for word in product_words) and any(word in normalized for word in loss_words)
+
+
+def is_product_profit_question(question: str) -> bool:
+    normalized = question.lower()
+    product_words = ["produto", "produtos", "sku", "item", "itens"]
+    profit_words = ["lucro", "lucrativo", "lucrativos", "margem", "rentavel", "rentável", "rentaveis", "rentáveis"]
+    return any(word in normalized for word in product_words) and any(word in normalized for word in profit_words) and not is_product_loss_question(question)
+
+
+def is_product_list_question(question: str) -> bool:
+    normalized = question.lower()
+    product_words = ["produto", "produtos", "sku", "item", "itens"]
+    return any(word in normalized for word in product_words) and has_list_word(normalized)
+
+
+def product_rows_answer(rows: list[dict[str, Any]], label: str, value_key: str) -> str:
+    if not rows:
+        return f"Nao encontrei {label} para o periodo selecionado."
+    display_rows = rows[:LIST_TEXT_LIMIT]
+    parts = [
+        f"{index + 1}. {row.get('produto')}: {format_brl(row.get(value_key))}"
+        for index, row in enumerate(display_rows)
+    ]
+    return f"Encontrei {len(rows)} {label} no periodo. Lista retornada para o usuario: " + " ".join(parts) + "." + limited_list_note(len(rows), len(display_rows))
+
+
+def answer_product_profitability(
+    question: str,
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    authorized_cnpjs: list[str] | None = None,
+    mode: Literal["loss", "profit"] = "profit",
+) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para analisar produtos, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": f"produtos_{mode}"},
+            "params": serialize(params),
+        }
+
+    cache_key = (
+        mode,
+        params["data_inicio"].isoformat(),
+        params["data_fim"].isoformat(),
+        *scoped_cache_part(cnpj, authorized_cnpjs),
+    )
+    cached = _product_answer_cache.get(cache_key)
+    now = monotonic()
+    if cached and now - cached[0] <= PRODUCT_ANSWER_CACHE_SECONDS:
+        return cached[1]
+
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    params["limit"] = 300 if authorized_cnpjs is not None or cnpj else 100
+    having = "having sum(lucro_bruto_estimado) < 0" if mode == "loss" else "having sum(lucro_bruto_estimado) > 0"
+    direction = "asc" if mode == "loss" else "desc"
+    sql = f"""
+    select
+      produto_id,
+      max(produto) as produto,
+      sum(qtd_vendida) as qtd_vendida,
+      sum(receita_liquida_item) as receita,
+      sum(custo_total_estimado) as custo,
+      sum(lucro_bruto_estimado) as lucro,
+      case when sum(receita_liquida_item) = 0 then null else sum(lucro_bruto_estimado) / sum(receita_liquida_item) end as margem
+    from analytics.mv_kpi_lucro_produto
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    group by produto_id
+    {having}
+    order by lucro {direction}
+    limit %(limit)s
+    """
+    rows = [serialize(row) for row in execute_optional_select(sql, params)]
+    label = "produto(s) com prejuizo estimado" if mode == "loss" else "produto(s) com lucro estimado"
+    answer = product_rows_answer(rows, label, "lucro")
+    if len(rows) == params["limit"]:
+        answer += f" Retornei os {params['limit']} principais por seguranca operacional."
+    answer += " Lucro e margem sao estimados ate homologacao final de custo."
+    result = {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "consultative_matched", "intent": f"produtos_{mode}"},
+        "params": serialize(params),
+        "sql": sql,
+    }
+    _product_answer_cache[cache_key] = (now, result)
+    if len(_product_answer_cache) > 256:
+        oldest_key = min(_product_answer_cache, key=lambda key: _product_answer_cache[key][0])
+        _product_answer_cache.pop(oldest_key, None)
+    return result
 
 
 def answer_customers(question: str, data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
@@ -753,27 +1503,15 @@ def answer_customers(question: str, data_inicio: date | None, data_fim: date | N
       where data between %(data_inicio)s and %(data_fim)s
       {loja_filter}
       group by cliente_id
-    ), inativos as (
-      select count(distinct h.cliente_id) as clientes_inativos
-      from analytics.mv_ai_cliente_diario h
-      where h.data < %(data_inicio)s
-      {loja_filter}
-        and not exists (
-          select 1
-          from analytics.mv_ai_cliente_diario p
-          where p.cliente_id = h.cliente_id
-            and p.loja_id = h.loja_id
-            and p.data between %(data_inicio)s and %(data_fim)s
-        )
     )
     select
       count(*) as clientes_ativos,
       count(*) filter (where primeira_compra between %(data_inicio)s and %(data_fim)s) as clientes_novos,
       count(*) filter (where cupons > 1) as clientes_recorrentes,
-      coalesce(max(inativos.clientes_inativos), 0) as clientes_inativos,
+      null::numeric as clientes_inativos,
       coalesce(sum(faturamento), 0) as faturamento_clientes,
       case when sum(cupons) = 0 then 0 else sum(faturamento) / sum(cupons) end as ticket_medio_clientes
-    from periodo_cliente cross join inativos
+    from periodo_cliente
     """
     vip_sql = f"""
     select
@@ -788,7 +1526,7 @@ def answer_customers(question: str, data_inicio: date | None, data_fim: date | N
     {loja_filter}
     group by cliente_id
     order by faturamento desc
-    limit 10
+    limit 50
     """
     summary_rows = [serialize(row) for row in execute_optional_select(summary_sql, params)]
     vip_rows = [serialize(row) for row in execute_optional_select(vip_sql, params)]
@@ -796,12 +1534,12 @@ def answer_customers(question: str, data_inicio: date | None, data_fim: date | N
     answer = (
         f"No periodo, encontrei {format_int(summary.get('clientes_ativos'))} cliente(s) ativo(s), "
         f"{format_int(summary.get('clientes_novos'))} novo(s), {format_int(summary.get('clientes_recorrentes'))} recorrente(s) "
-        f"e {format_int(summary.get('clientes_inativos'))} inativo(s). "
-        f"Ticket medio identificado: {format_brl(summary.get('ticket_medio_clientes'))}."
+        f"e ticket medio identificado de {format_brl(summary.get('ticket_medio_clientes'))}. "
+        "Clientes inativos nao foram calculados nesta lista rapida para evitar consulta pesada."
     )
     if vip_rows:
-        top = vip_rows[0]
-        answer += f" Cliente VIP por faturamento: {top.get('cliente')}, com {format_brl(top.get('faturamento'))}."
+        parts = [f"{index + 1}. {row.get('cliente')}: {format_brl(row.get('faturamento'))}" for index, row in enumerate(vip_rows)]
+        answer += " Clientes com maior faturamento retornados: " + " ".join(parts) + "."
 
     return {
         "status": "answered",
@@ -903,7 +1641,7 @@ def answer_product_strategy(question: str, data_inicio: date | None, data_fim: d
     from bordas
     where receita_inicio is not null and receita_fim is not null
     order by abs(receita_fim - receita_inicio) desc
-    limit 10
+    limit 50
     """
     abc_rows = [serialize(row) for row in execute_optional_select(abc_sql, params)]
     trend_rows = [serialize(row) for row in execute_optional_select(trends_sql, params)]
@@ -911,7 +1649,14 @@ def answer_product_strategy(question: str, data_inicio: date | None, data_fim: d
         answer = "Nao encontrei produtos estrategicos para o periodo selecionado."
     else:
         leader = abc_rows[0]
-        answer = f"Produto lider por faturamento: {leader.get('produto')}, com {format_brl(leader.get('receita'))} e curva {leader.get('curva_abc_faturamento')}."
+        products = [
+            f"{index + 1}. {row.get('produto')}: {format_brl(row.get('receita'))}, curva {row.get('curva_abc_faturamento')}"
+            for index, row in enumerate(abc_rows)
+        ]
+        answer = (
+            f"Produto lider por faturamento: {leader.get('produto')}, com {format_brl(leader.get('receita'))} "
+            f"e curva {leader.get('curva_abc_faturamento')}. Produtos retornados para o usuario: " + " ".join(products) + "."
+        )
         if trend_rows:
             growth = max(trend_rows, key=lambda row: float(row.get("variacao_receita") or 0))
             fall = min(trend_rows, key=lambda row: float(row.get("variacao_receita") or 0))
@@ -945,7 +1690,22 @@ def answer_seller_performance(question: str, data_inicio: date | None, data_fim:
         }
 
     loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    margin_mode = is_seller_margin_question(question)
+    low_margin_mode = margin_mode and is_low_margin_question(question)
+    high_margin_mode = margin_mode and is_high_margin_question(question) and not low_margin_mode
+    if low_margin_mode:
+        order_by = "margem asc nulls last, lucro asc"
+    elif high_margin_mode:
+        order_by = "margem desc nulls last, lucro desc"
+    elif margin_mode:
+        order_by = "lucro desc, margem desc nulls last"
+    else:
+        order_by = "valor_vendido desc"
+    margin_filter = "where valor_vendido >= %(min_valor_vendido)s" if margin_mode else ""
+    if margin_mode:
+        params["min_valor_vendido"] = 100
     sql = f"""
+    select * from (
     select
       vendedor_id,
       vendedor,
@@ -963,18 +1723,44 @@ def answer_seller_performance(question: str, data_inicio: date | None, data_fim:
     where data between %(data_inicio)s and %(data_fim)s
     {loja_filter}
     group by vendedor_id, vendedor
-    order by valor_vendido desc
-    limit 10
+    ) vendedores
+    {margin_filter}
+    order by {order_by}
+    limit 50
     """
     rows = [serialize(row) for row in execute_optional_select(sql, params)]
     if not rows:
         answer = "Nao encontrei vendas por vendedor para o periodo selecionado."
+    elif margin_mode:
+        leader = rows[0]
+        parts = [
+            f"{index + 1}. {row.get('vendedor')}: margem {format_percent(float(row.get('margem') or 0) * 100)}, lucro {format_brl(row.get('lucro'))}, venda {format_brl(row.get('valor_vendido'))}"
+            for index, row in enumerate(rows)
+        ]
+        if low_margin_mode:
+            answer = (
+                f"O vendedor com menor margem estimada foi {leader.get('vendedor')}, com margem {format_percent(float(leader.get('margem') or 0) * 100)} "
+                f"e lucro estimado de {format_brl(leader.get('lucro'))} entre {params['data_inicio']} e {params['data_fim']}. "
+                "Considerei vendedores com pelo menos R$ 100,00 vendidos para evitar distorcoes de cupons residuais. Ranking por margem estimada: " + " ".join(parts)
+            )
+        elif high_margin_mode:
+            answer = (
+                f"O vendedor com maior margem estimada foi {leader.get('vendedor')}, com margem {format_percent(float(leader.get('margem') or 0) * 100)} "
+                f"e lucro estimado de {format_brl(leader.get('lucro'))} entre {params['data_inicio']} e {params['data_fim']}. "
+                "Considerei vendedores com pelo menos R$ 100,00 vendidos para evitar distorcoes de cupons residuais. Ranking por margem estimada: " + " ".join(parts)
+            )
+        else:
+            answer = (
+                f"O vendedor com maior lucro estimado foi {leader.get('vendedor')}, com {format_brl(leader.get('lucro'))} "
+                f"e margem {format_percent(float(leader.get('margem') or 0) * 100)} entre {params['data_inicio']} e {params['data_fim']}. "
+                "Considerei vendedores com pelo menos R$ 100,00 vendidos para evitar distorcoes de cupons residuais. Ranking por lucro/margem estimados: " + " ".join(parts)
+            )
     else:
         leader = rows[0]
-        parts = [f"{index + 1}. {row.get('vendedor')}: {format_brl(row.get('valor_vendido'))}" for index, row in enumerate(rows[:5])]
+        parts = [f"{index + 1}. {row.get('vendedor')}: {format_brl(row.get('valor_vendido'))}" for index, row in enumerate(rows)]
         answer = (
             f"O vendedor com maior valor vendido foi {leader.get('vendedor')}, com {format_brl(leader.get('valor_vendido'))} "
-            f"entre {params['data_inicio']} e {params['data_fim']}. Top 5: " + " ".join(parts)
+            f"entre {params['data_inicio']} e {params['data_fim']}. Vendedores retornados: " + " ".join(parts)
         )
 
     return {
@@ -1017,17 +1803,17 @@ def answer_hour_performance(question: str, data_inicio: date | None, data_fim: d
     {loja_filter}
     group by hora
     order by faturamento desc
-    limit 10
+    limit 24
     """
     rows = [serialize(row) for row in execute_optional_select(sql, params)]
     if not rows:
         answer = "Nao encontrei vendas por horario para o periodo selecionado."
     else:
         leader = rows[0]
-        parts = [f"{int(row.get('hora') or 0):02d}h ({row.get('faixa_horaria')}): {format_brl(row.get('faturamento'))}" for row in rows[:5]]
+        parts = [f"{int(row.get('hora') or 0):02d}h ({row.get('faixa_horaria')}): {format_brl(row.get('faturamento'))}" for row in rows]
         answer = (
             f"O melhor horario foi {int(leader.get('hora') or 0):02d}h, com {format_brl(leader.get('faturamento'))}. "
-            "Top horarios: " + "; ".join(parts) + "."
+            "Horarios retornados: " + "; ".join(parts) + "."
         )
 
     return {
@@ -1078,8 +1864,8 @@ def answer_alerts(question: str, data_inicio: date | None, data_fim: date | None
     if not rows:
         answer = "Nao encontrei alertas operacionais no periodo selecionado."
     else:
-        parts = [f"{row.get('severidade')}: {row.get('titulo')} ({format_int(row.get('ocorrencias'))} ocorrencias)" for row in rows[:5]]
-        answer = "Principais alertas do periodo: " + "; ".join(parts) + "."
+        parts = [f"{row.get('severidade')}: {row.get('titulo')} ({format_int(row.get('ocorrencias'))} ocorrencias)" for row in rows]
+        answer = "Alertas retornados no periodo: " + "; ".join(parts) + "."
 
     return {
         "status": "answered",
@@ -1138,6 +1924,50 @@ def answer_total_revenue(question: str, data_inicio: date | None, data_fim: date
     }
 
 
+def answer_ticket(question: str, data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para calcular ticket medio, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": "ticket_medio"},
+            "params": serialize(params),
+        }
+
+    loja_filter = cnpj_filter(cnpj, authorized_cnpjs)
+    sql = f"""
+    select
+      coalesce(sum(faturamento_liquido), 0) as faturamento,
+      coalesce(sum(qtd_cupons), 0) as cupons,
+      case when sum(qtd_cupons) = 0 then 0 else sum(faturamento_liquido) / sum(qtd_cupons) end as ticket_medio
+    from analytics.mv_kpi_faturamento_diario
+    where data between %(data_inicio)s and %(data_fim)s
+    {loja_filter}
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    first = rows[0] if rows else {}
+    answer = (
+        f"No periodo de {params['data_inicio']} a {params['data_fim']}, "
+        f"o ticket medio foi {format_brl(first.get('ticket_medio'))}. "
+        f"Base: {format_int(first.get('cupons'))} cupons e {format_brl(first.get('faturamento'))} de faturamento."
+    )
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "consultative_matched", "intent": "ticket_medio"},
+        "params": serialize(params),
+        "sql": sql,
+    }
+
+
 def answer_store_revenue(question: str, data_inicio: date | None, data_fim: date | None, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> dict[str, Any]:
     params = parse_period(question, data_inicio, data_fim)
     add_cnpj_params(params, cnpj, authorized_cnpjs)
@@ -1166,7 +1996,6 @@ def answer_store_revenue(question: str, data_inicio: date | None, data_fim: date
     {loja_filter}
     group by loja_id
     order by faturamento desc
-    limit 10
     """
     rows = [serialize(row) for row in execute_select(sql, params)]
 
@@ -1174,11 +2003,18 @@ def answer_store_revenue(question: str, data_inicio: date | None, data_fim: date
         answer = "Nao encontrei faturamento por loja para o periodo selecionado."
     else:
         leader = rows[0]
-        parts = [f"{index + 1}. {row.get('loja')}: {format_brl(row.get('faturamento'))}" for index, row in enumerate(rows[:5])]
-        answer = (
-            f"A loja que mais vendeu foi {leader.get('loja')}, com {format_brl(leader.get('faturamento'))} "
-            f"entre {params['data_inicio']} e {params['data_fim']}. Top 5: " + " ".join(parts)
-        )
+        worst = rows[-1]
+        parts = [f"{index + 1}. {row.get('loja')}: {format_brl(row.get('faturamento'))}" for index, row in enumerate(rows)]
+        if is_worst_store_question(question):
+            answer = (
+                f"A loja com menor faturamento foi {worst.get('loja')}, com {format_brl(worst.get('faturamento'))} "
+                f"entre {params['data_inicio']} e {params['data_fim']}. Todas as lojas do usuario no periodo: " + " ".join(parts)
+            )
+        else:
+            answer = (
+                f"A loja que mais vendeu foi {leader.get('loja')}, com {format_brl(leader.get('faturamento'))} "
+                f"entre {params['data_inicio']} e {params['data_fim']}. Todas as lojas do usuario no periodo: " + " ".join(parts)
+            )
 
     return {
         "status": "answered",
@@ -1349,11 +2185,11 @@ def product_recommendation_answer(rows: list[dict[str, Any]]) -> str:
 
     parts: list[str] = []
     if focus:
-        names = ", ".join(str(row["produto"]) for row in focus[:3])
+        names = ", ".join(str(row["produto"]) for row in focus)
         parts.append(f"Eu focaria em: {names}.")
         parts.append("Criterio: lucro estimado positivo, receita relevante e venda no periodo analisado.")
     if risks:
-        names = ", ".join(str(row["produto"]) for row in risks[:3])
+        names = ", ".join(str(row["produto"]) for row in risks)
         parts.append(f"Tambem monitoraria/corrigiria: {names}, pois aparecem com prejuizo estimado.")
     parts.append("Usei o periodo selecionado como referencia historica. Lucro e margem ainda sao estimados ate homologacao final de custo.")
     return " ".join(parts)
@@ -1467,6 +2303,17 @@ def answer_question(
     params = parse_period(question, data_inicio, data_fim)
     context_start = params.get("data_inicio") or data_inicio
     context_end = params.get("data_fim") or data_fim
+    conversation_topic = last_history_topic(question, history)
+
+    if is_formula_question(question):
+        return answer_formula(question, conversation_topic, context_start, context_end)
+
+    if is_network_question(question):
+        return answer_network_comparison(question, data_inicio, data_fim, cnpj, authorized_cnpjs, conversation_topic)
+
+    operational_metric = resolve_operational_metric(question)
+    if operational_metric:
+        return answer_operational_kpi(question, data_inicio, data_fim, cnpj, authorized_cnpjs, operational_metric)
 
     if is_daily_revenue_series(question):
         return answer_daily_revenue_series(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
@@ -1479,6 +2326,18 @@ def answer_question(
 
     if is_total_revenue_question(question):
         return answer_total_revenue(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_ticket_question(question):
+        return answer_ticket(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_goal_question(question):
+        return answer_goal_unavailable(question, context_start, context_end)
+
+    if is_dre_question(question):
+        return answer_margin_summary(question, data_inicio, data_fim, cnpj, authorized_cnpjs, "dre")
+
+    if is_cmv_question(question):
+        return answer_margin_summary(question, data_inicio, data_fim, cnpj, authorized_cnpjs, "cmv")
 
     if is_discount_return_question(question):
         return answer_discounts_returns(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
@@ -1498,8 +2357,23 @@ def answer_question(
     if is_customer_question(question):
         return answer_customers(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
 
+    if is_product_loss_question(question):
+        return answer_product_profitability(question, data_inicio, data_fim, cnpj, authorized_cnpjs, "loss")
+
+    if is_product_profit_question(question):
+        return answer_product_profitability(question, data_inicio, data_fim, cnpj, authorized_cnpjs, "profit")
+
+    if is_product_list_question(question):
+        return answer_product_profitability(question, data_inicio, data_fim, cnpj, authorized_cnpjs, "profit")
+
     if is_product_strategy_question(question):
         return answer_product_strategy(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_product_recommendation(question):
+        return answer_product_recommendation(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
+
+    if is_clear_out_of_scope_question(question):
+        return answer_out_of_scope(question, context_start, context_end)
 
     if has_openai_key():
         kpi_context = build_kpi_context(context_start, context_end, cnpj, authorized_cnpjs)
@@ -1515,9 +2389,6 @@ def answer_question(
                 "params": serialize({"data_inicio": context_start, "data_fim": context_end, "cnpj": cnpj, "cnpjs_autorizados": authorized_cnpjs}),
                 "kpi_context": kpi_context,
             }
-
-    if is_product_recommendation(question):
-        return answer_product_recommendation(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
 
     route = find_question_route(question)
     if route.get("status") != "template_matched" or not route.get("template"):

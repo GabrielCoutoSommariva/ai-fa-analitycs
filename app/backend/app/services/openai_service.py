@@ -1,10 +1,26 @@
 import json
+import threading
 from typing import Any
 import urllib.request
 
 from openai import OpenAI
 
 from app.config import get_settings
+
+
+_semaphore_lock = threading.Lock()
+_semaphore: threading.BoundedSemaphore | None = None
+_semaphore_size = 0
+
+
+def _ai_semaphore(settings: Any) -> threading.BoundedSemaphore:
+    global _semaphore, _semaphore_size
+    size = max(1, int(getattr(settings, "ai_max_concurrent_requests", 12) or 12))
+    with _semaphore_lock:
+        if _semaphore is None or _semaphore_size != size:
+            _semaphore = threading.BoundedSemaphore(size)
+            _semaphore_size = size
+        return _semaphore
 
 
 def has_openai_key() -> bool:
@@ -38,23 +54,28 @@ def _chat_completion_http(settings: Any, messages: list[dict[str, str]], tempera
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=settings.openai_timeout_seconds) as response:
         body = json.loads(response.read().decode("utf-8"))
     return body["choices"][0]["message"]["content"]
 
 
 def _chat_completion(settings: Any, messages: list[dict[str, str]], temperature: float) -> str | None:
+    semaphore = _ai_semaphore(settings)
+    if not semaphore.acquire(timeout=max(0, int(getattr(settings, "ai_queue_timeout_seconds", 2) or 2))):
+        return None
     try:
         client = get_ai_client(settings)
         response = client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
             temperature=temperature,
-            timeout=60,
+            timeout=settings.openai_timeout_seconds,
         )
         return response.choices[0].message.content
     except Exception:
         return _chat_completion_http(settings, messages, temperature)
+    finally:
+        semaphore.release()
 
 
 def summarize_with_openai(question: str, route: dict[str, Any], rows: list[dict[str, Any]]) -> str | None:
@@ -105,6 +126,7 @@ Se a pergunta atual for follow-up, preserve o assunto anterior.
 Nao repita a mesma resposta anterior; complemente, compare ou aprofunde.
 Se faltar dado no pacote de KPIs, diga objetivamente o que falta.
 Se a pergunta pedir faturamento por mes, mensal, mes a mes ou cada mes, use o campo faturamento_mensal do pacote de KPIs.
+Se a pergunta pedir lojas, use o campo lojas e liste todas as lojas enviadas, nao apenas top 5.
 Se a pergunta pedir vendedores/equipe, use ranking_vendedores.
 Se a pergunta pedir horarios/faixas de movimento, use vendas_por_horario.
 Se a pergunta pedir dia da semana, melhor dia, pior dia ou sazonalidade semanal, use sazonalidade_dia_semana.
