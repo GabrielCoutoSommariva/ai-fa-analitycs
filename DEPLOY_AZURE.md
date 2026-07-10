@@ -173,10 +173,12 @@ select count(*) from (select 1 from vendas.vendas_cab limit 1) s;
 cd /opt/farmacia-bi/app
 
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/01_analytics_schema.sql
+docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/01_local_dimensions.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/02_kpi_views.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/03_semantic_catalog.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/05_materialized_kpis.sql
 docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/06_ai_kpis.sql
+docker compose -f docker-compose.prod.yml exec -T db psql -U postgres -d db_farmacias_bi -v ON_ERROR_STOP=1 < /opt/farmacia-bi/bi/sql/08_bronze_sales.sql
 ```
 
 ## Subir Aplicacao

@@ -1,57 +1,8 @@
--- Cria camada analitica base. Nao altera o schema vendas.
+-- Troca opt-in das facts analytics.* para ler a camada bronze local.
+-- Nao execute em producao antes de validar que bronze.vendas_* cobre o periodo esperado.
 
 create schema if not exists analytics;
-
-create or replace view analytics.dim_associado as
-select
-  id as associado_id,
-  id_associado_interno,
-  nome,
-  cnpj,
-  status,
-  data_inc,
-  matriz,
-  regiao,
-  porte,
-  software
-from vendas.associado;
-
-create or replace view analytics.dim_loja as
-select
-  id as loja_id,
-  id_associado as associado_id,
-  id_loja_interno,
-  nome,
-  cnpj
-from vendas.loja;
-
-create or replace view analytics.dim_cliente as
-select
-  id as cliente_id,
-  id_associado as associado_id,
-  id_cliente_interno,
-  nome
-from vendas.cliente;
-
-create or replace view analytics.dim_colaborador as
-select
-  id as colaborador_id,
-  id_associado as associado_id,
-  id_colaborador_interno,
-  nome
-from vendas.colaborador;
-
-create or replace view analytics.dim_produto as
-select
-  id as produto_id,
-  id_associado as associado_id,
-  id_produto_interno,
-  nome,
-  gtin,
-  preco_bruto,
-  preco_liquido,
-  custo_ult_entrada
-from vendas.produto;
+create schema if not exists bronze;
 
 create or replace view analytics.fact_venda as
 select
@@ -87,7 +38,7 @@ select
   vc.st_caixa = 'DP' as is_devolucao_parcial,
   vc.st_caixa = 'DV' as is_devolucao_total,
   vc.st_caixa in ('PA', 'DP') as is_venda_valida
-from vendas.vendas_cab vc;
+from bronze.vendas_cab vc;
 
 create or replace view analytics.fact_venda_item as
 select
@@ -126,8 +77,8 @@ select
   vi.uso_continuo,
   vi.bloq_sngpc,
   vi.bloq_compra
-from vendas.vendas_item vi
-left join vendas.produto p on p.id = vi.id_produto;
+from bronze.vendas_item vi
+left join analytics.dim_produto p on p.produto_id = vi.id_produto;
 
 create or replace view analytics.fact_venda_servico as
 select
@@ -143,41 +94,4 @@ select
   vs.valor as valor_servico,
   vs.custo as custo_servico,
   vs.situacao
-from vendas.vendas_serv vs;
-
-create or replace view analytics.fact_compra_item as
-select
-  ni.id as compra_item_id,
-  ni.id_nfiscal as nf_entrada_id,
-  ni.id_associado as associado_id,
-  ni.id_loja as loja_id,
-  ni.id_produto as produto_id,
-  nc.id_fornecedor as fornecedor_id,
-  nc.numero,
-  nc.serie,
-  nc.modelo,
-  nc.data_doc,
-  nc.data_lct,
-  nc.stat_pr,
-  nc.stat_cont,
-  nc.stat_fin,
-  nc.mov_fin,
-  nc.stat_custo,
-  ni.nome_produto,
-  ni.ean_gtin,
-  ni.quantid,
-  ni.qtd_calc,
-  ni.vlr_unitario,
-  ni.vlr_produto,
-  ni.vlr_desconto,
-  ni.vlr_total,
-  ni.vlr_frete,
-  ni.vlr_outros,
-  ni.vlr_icms,
-  ni.vlr_icms_st,
-  ni.vlr_ipi,
-  ni.vlr_pis,
-  ni.vlr_cofins,
-  ni.mov_estoq
-from vendas.nf_entrada_item ni
-join vendas.nf_entrada_cab nc on nc.id = ni.id_nfiscal;
+from bronze.vendas_serv vs;

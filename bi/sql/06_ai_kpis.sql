@@ -4,6 +4,9 @@
 create schema if not exists analytics;
 
 drop materialized view if exists analytics.mv_ai_alertas_operacionais;
+drop materialized view if exists analytics.mv_ai_desconto_devolucao_produto_mensal;
+drop materialized view if exists analytics.mv_ai_desconto_devolucao_diario;
+drop materialized view if exists analytics.mv_ai_sazonalidade_dia_semana;
 drop materialized view if exists analytics.mv_ai_produto_mensal;
 drop materialized view if exists analytics.mv_ai_cliente_diario;
 drop materialized view if exists analytics.mv_ai_vendas_horario;
@@ -60,7 +63,7 @@ from analytics.fact_venda_item fvi
 join analytics.fact_venda fv on fv.venda_id = fvi.venda_id
 left join analytics.dim_colaborador c on c.colaborador_id = fvi.vendedor_id
 left join analytics.dim_loja l on l.loja_id = fvi.loja_id
-where fv.data <= current_date
+where fv.data <= current_date and fv.is_venda_valida
 group by 1, 2, 3, 4, 5, 6;
 
 create index idx_mv_ai_vendedor_data_loja on analytics.mv_ai_vendedor_diario (data, loja_id);
@@ -88,7 +91,7 @@ select
   sum(fv.vlr_devolucao) as valor_devolucao
 from analytics.fact_venda fv
 left join analytics.dim_loja l on l.loja_id = fv.loja_id
-where fv.data <= current_date and fv.hora is not null
+where fv.data <= current_date and fv.is_venda_valida and fv.hora is not null
 group by 1, 2, 3, 4, 5, 6, 7;
 
 create index idx_mv_ai_vendas_horario_data_loja on analytics.mv_ai_vendas_horario (data, loja_id);
@@ -131,7 +134,7 @@ with resumo as (
     count(*) as qtd_vendas
   from analytics.fact_venda fv
   left join analytics.dim_loja l on l.loja_id = fv.loja_id
-  where fv.data > current_date
+  where fv.data > current_date and fv.is_venda_valida
   group by 1, 2, 3, 4
 )
 select
@@ -224,7 +227,7 @@ select
 from analytics.fact_venda fv
 left join analytics.dim_cliente c on c.cliente_id = fv.cliente_id
 left join analytics.dim_loja l on l.loja_id = fv.loja_id
-where fv.data <= current_date and fv.cliente_id is not null
+where fv.data <= current_date and fv.is_venda_valida and fv.cliente_id is not null
 group by 1, 2, 3, 4, 5, 6;
 
 create index idx_mv_ai_cliente_data_loja on analytics.mv_ai_cliente_diario (data, loja_id);
@@ -257,9 +260,97 @@ create index idx_mv_ai_produto_mensal_produto on analytics.mv_ai_produto_mensal 
 create index idx_mv_ai_produto_mensal_receita on analytics.mv_ai_produto_mensal (receita_liquida_item);
 create index idx_mv_ai_produto_mensal_lucro on analytics.mv_ai_produto_mensal (lucro_bruto_estimado);
 
+create materialized view analytics.mv_ai_sazonalidade_dia_semana as
+select
+  f.data,
+  f.associado_id,
+  f.loja_id,
+  regexp_replace(coalesce(l.cnpj, ''), '\D', '', 'g') as cnpj,
+  extract(isodow from f.data)::int as dia_semana,
+  case extract(isodow from f.data)::int
+    when 1 then 'segunda-feira'
+    when 2 then 'terca-feira'
+    when 3 then 'quarta-feira'
+    when 4 then 'quinta-feira'
+    when 5 then 'sexta-feira'
+    when 6 then 'sabado'
+    else 'domingo'
+  end as nome_dia_semana,
+  f.qtd_cupons,
+  f.faturamento_liquido,
+  case when f.qtd_cupons = 0 then 0 else f.faturamento_liquido / f.qtd_cupons end as ticket_medio,
+  f.valor_devolucao
+from analytics.mv_kpi_faturamento_diario f
+left join analytics.dim_loja l on l.loja_id = f.loja_id
+where f.data <= current_date;
+
+create index idx_mv_ai_sazonalidade_data_loja on analytics.mv_ai_sazonalidade_dia_semana (data, loja_id);
+create index idx_mv_ai_sazonalidade_loja on analytics.mv_ai_sazonalidade_dia_semana (loja_id);
+create index idx_mv_ai_sazonalidade_dia_semana on analytics.mv_ai_sazonalidade_dia_semana (dia_semana);
+create index idx_mv_ai_sazonalidade_cnpj on analytics.mv_ai_sazonalidade_dia_semana (cnpj);
+
+create materialized view analytics.mv_ai_desconto_devolucao_diario as
+select
+  o.data,
+  o.associado_id,
+  o.loja_id,
+  regexp_replace(coalesce(l.cnpj, ''), '\D', '', 'g') as cnpj,
+  o.total_cupons as qtd_cupons,
+  coalesce(f.faturamento_liquido, 0) as faturamento_liquido,
+  coalesce(o.desconto_manual, 0) as desconto_manual,
+  coalesce(o.desconto_automatico, 0) as desconto_automatico,
+  coalesce(o.desconto_total, 0) as desconto_total,
+  case
+    when coalesce(f.faturamento_liquido, 0) = 0 then null
+    else coalesce(o.desconto_total, 0) / f.faturamento_liquido
+  end as percentual_desconto,
+  coalesce(f.valor_devolucao, 0) as valor_devolucao,
+  case
+    when coalesce(f.faturamento_liquido, 0) + coalesce(f.valor_devolucao, 0) = 0 then null
+    else coalesce(f.valor_devolucao, 0) / (coalesce(f.faturamento_liquido, 0) + coalesce(f.valor_devolucao, 0))
+  end as percentual_devolucao
+from analytics.mv_kpi_operacional_diario o
+left join analytics.mv_kpi_faturamento_diario f on f.data = o.data and f.associado_id = o.associado_id and f.loja_id = o.loja_id
+left join analytics.dim_loja l on l.loja_id = o.loja_id
+where o.data <= current_date;
+
+create index idx_mv_ai_desc_dev_diario_data_loja on analytics.mv_ai_desconto_devolucao_diario (data, loja_id);
+create index idx_mv_ai_desc_dev_diario_loja on analytics.mv_ai_desconto_devolucao_diario (loja_id);
+create index idx_mv_ai_desc_dev_diario_cnpj on analytics.mv_ai_desconto_devolucao_diario (cnpj);
+
+create materialized view analytics.mv_ai_desconto_devolucao_produto_mensal as
+select
+  date_trunc('month', fv.data)::date as mes,
+  fvi.associado_id,
+  fvi.loja_id,
+  regexp_replace(coalesce(l.cnpj, ''), '\D', '', 'g') as cnpj,
+  fvi.produto_id,
+  max(fvi.nome_produto) as produto,
+  sum(fvi.qtd_liquida) as qtd_liquida,
+  sum(fvi.venda_liquida_item) as receita_liquida_item,
+  sum(coalesce(fvi.vlr_desc_usu, 0)) as desconto_manual,
+  sum(coalesce(fvi.vlr_desc_sist, 0)) as desconto_automatico,
+  sum(coalesce(fvi.vlr_desc_usu, 0) + coalesce(fvi.vlr_desc_sist, 0)) as desconto_total,
+  sum(coalesce(fvi.vlr_devol, 0)) as valor_devolucao,
+  sum(coalesce(fvi.qtd_devol, 0)) as qtd_devolvida
+from analytics.fact_venda_item fvi
+join analytics.fact_venda fv on fv.venda_id = fvi.venda_id
+left join analytics.dim_loja l on l.loja_id = fvi.loja_id
+where fv.data <= current_date and fv.is_venda_valida
+group by 1, 2, 3, 4, 5;
+
+create index idx_mv_ai_desc_dev_produto_mes_loja on analytics.mv_ai_desconto_devolucao_produto_mensal (mes, loja_id);
+create index idx_mv_ai_desc_dev_produto_loja on analytics.mv_ai_desconto_devolucao_produto_mensal (loja_id);
+create index idx_mv_ai_desc_dev_produto_produto on analytics.mv_ai_desconto_devolucao_produto_mensal (produto_id);
+create index idx_mv_ai_desc_dev_produto_devolucao on analytics.mv_ai_desconto_devolucao_produto_mensal (valor_devolucao);
+create index idx_mv_ai_desc_dev_produto_desconto on analytics.mv_ai_desconto_devolucao_produto_mensal (desconto_total);
+
 analyze analytics.mv_ai_resumo_executivo_diario;
 analyze analytics.mv_ai_vendedor_diario;
 analyze analytics.mv_ai_vendas_horario;
 analyze analytics.mv_ai_alertas_operacionais;
 analyze analytics.mv_ai_cliente_diario;
 analyze analytics.mv_ai_produto_mensal;
+analyze analytics.mv_ai_sazonalidade_dia_semana;
+analyze analytics.mv_ai_desconto_devolucao_diario;
+analyze analytics.mv_ai_desconto_devolucao_produto_mensal;

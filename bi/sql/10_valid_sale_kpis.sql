@@ -1,6 +1,44 @@
--- KPIs iniciais. As regras de status ainda devem ser validadas em 00_profile_core.sql.
+-- Regra de venda valida para KPIs executivos.
+-- Mantem analytics.fact_venda como fato rastreavel, mas expõe is_venda_valida
+-- e filtra os KPIs principais para st_caixa in ('PA', 'DP').
 
 create schema if not exists analytics;
+
+create or replace view analytics.fact_venda as
+select
+  vc.id as venda_id,
+  vc.id_associado as associado_id,
+  vc.id_loja as loja_id,
+  vc.id_cliente as cliente_id,
+  vc.id_atendente as atendente_id,
+  vc.nro_venda,
+  vc.ticket,
+  vc.data,
+  vc.hora,
+  vc.nro_caixa,
+  vc.tipo_venda,
+  vc.origem,
+  vc.status,
+  vc.st_caixa,
+  vc.fcia_popular,
+  vc.conferido,
+  vc.expedida,
+  vc.vlr_liquido,
+  vc.vlr_produto,
+  vc.vlr_servico,
+  vc.vlr_desc_usu,
+  vc.vlr_desc_sist,
+  vc.vlr_acresc,
+  vc.vlr_subsidio,
+  vc.vlr_frete,
+  vc.vlr_devolucao,
+  vc.cpf_nf is not null and btrim(vc.cpf_nf) <> '' as tem_cpf_nf,
+  vc.vlr_liquido - vc.vlr_devolucao as vlr_liquido_ajustado,
+  vc.st_caixa = 'PA' as is_caixa_pago,
+  vc.st_caixa = 'DP' as is_devolucao_parcial,
+  vc.st_caixa = 'DV' as is_devolucao_total,
+  vc.st_caixa in ('PA', 'DP') as is_venda_valida
+from vendas.vendas_cab vc;
 
 create or replace view analytics.kpi_faturamento_diario as
 select

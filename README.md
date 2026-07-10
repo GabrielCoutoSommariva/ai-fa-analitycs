@@ -23,9 +23,11 @@ app/
 
 bi/sql/
   01_analytics_schema.sql
+  01_local_dimensions.sql
   02_kpi_views.sql
   03_semantic_catalog.sql
   05_materialized_kpis.sql
+  08_bronze_sales.sql
 ```
 
 ## Banco
@@ -36,7 +38,7 @@ A aplicacao nao precisa de dump no repositorio. Em producao, ela usa um banco BI
 db_farmacias_bi
 ```
 
-Esse banco usa `postgres_fdw` para ler o banco original do cliente em modo read-only e materializa KPIs no schema `analytics`.
+Esse banco usa `postgres_fdw` para ler o banco original do cliente em modo read-only, sincroniza dimensoes pequenas em `silver`, prepara fatos transacionais em `bronze` e materializa KPIs no schema `analytics`.
 
 ## Variaveis De Ambiente
 
@@ -52,6 +54,7 @@ Preencha os valores reais somente no ambiente de deploy. Nao versionar `.env`.
 
 - `DEPLOY_AZURE.md`: passo a passo para subir no Azure.
 - `OPERACAO.md`: comandos de operacao, logs, refresh e validacoes.
+- `docs/teste-carga.md`: smoke de carga k6 para health e endpoints principais.
 
 ## Itens Que Nao Devem Ser Versionados
 
