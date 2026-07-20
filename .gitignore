@@ -1,6 +1,7 @@
 # Environment and secrets
 .env
 .env.*
+ssh/
 !.env.example
 !.env.prod.example
 !.env.sample

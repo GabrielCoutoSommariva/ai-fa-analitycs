@@ -36,11 +36,11 @@ def parse_period(question: str, data_inicio: date | None, data_fim: date | None)
     normalized = question.lower()
     today = date.today()
 
-    if "ontem" in normalized:
+    if re.search(r"\bontem\b", normalized):
         target = today - timedelta(days=1)
         return {"data": target, "data_inicio": target, "data_fim": target}
 
-    if "hoje" in normalized:
+    if re.search(r"\bhoje\b", normalized):
         return {"data": today, "data_inicio": today, "data_fim": today}
 
     for month_name, month in MONTHS.items():

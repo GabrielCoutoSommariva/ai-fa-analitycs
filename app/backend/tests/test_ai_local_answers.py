@@ -166,6 +166,116 @@ class AiLocalAnswersTest(unittest.TestCase):
         self.assertTrue(any("cnpjs" in call for call in calls))
         self.assertTrue(any("cnpjs" not in call for call in calls))
 
+    def test_product_specific_sales_answer_uses_item_route(self):
+        def fake_execute_select(sql, params):
+            self.assertIn("bronze.vendas_item", sql)
+            self.assertIn("bronze.vendas_cab", sql)
+            self.assertEqual(params["produto_codigo"], "7896018751002")
+            return [
+                {
+                    "produtos_encontrados": 1,
+                    "produto_id": 41741,
+                    "id_produto_interno": 41741,
+                    "ean_gtin": "7896018751002",
+                    "produto": "Produto Teste",
+                    "quantidade_vendida": 12,
+                    "valor_total_vendido_item": 1200,
+                    "cmv_estimado_item": 700,
+                    "lucro_bruto_item": 500,
+                    "margem_item": 0.4166667,
+                    "quantidade_cupons_com_item": 10,
+                    "valor_total_cupons_com_item": 2500,
+                }
+            ]
+
+        qa.execute_select = fake_execute_select
+
+        result = qa.answer_question(
+            "Poderia somar o total de vendas do item ean 7896018751002?",
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            None,
+            [],
+            ["12345678000199"],
+        )
+
+        self.assertEqual(result["route"]["intent"], "produto_especifico")
+        self.assertEqual(result["route"]["topic"], "venda_item")
+        self.assertIn("Produto Teste", result["answer"])
+        self.assertIn("R$ 1.200,00", result["answer"])
+        self.assertIn("PA/DP", result["answer"])
+
+    def test_product_specific_margin_followup_uses_previous_item(self):
+        def fake_execute_select(sql, params):
+            self.assertEqual(params["produto_codigo"], "41741")
+            return [
+                {
+                    "produtos_encontrados": 1,
+                    "produto_id": 41741,
+                    "id_produto_interno": 41741,
+                    "ean_gtin": "7896018751002",
+                    "produto": "Produto Teste",
+                    "quantidade_vendida": 5,
+                    "valor_total_vendido_item": 1000,
+                    "cmv_estimado_item": 600,
+                    "lucro_bruto_item": 400,
+                    "margem_item": 0.4,
+                    "quantidade_cupons_com_item": 4,
+                    "valor_total_cupons_com_item": 1800,
+                }
+            ]
+
+        qa.execute_select = fake_execute_select
+
+        result = qa.answer_question(
+            "Qual a margem obtida nessas vendas?",
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            None,
+            [{"role": "user", "content": "Poderia somar o valor total vendido do item 41741?"}],
+            None,
+        )
+
+        self.assertEqual(result["route"]["intent"], "produto_especifico")
+        self.assertEqual(result["route"]["topic"], "margem_item")
+        self.assertIn("40,00%", result["answer"])
+        self.assertIn("margem do item", result["answer"])
+
+    def test_product_specific_coupon_followup_uses_coupon_total(self):
+        def fake_execute_select(sql, params):
+            self.assertIn("vendas_validas_com_item", sql)
+            return [
+                {
+                    "produtos_encontrados": 1,
+                    "produto_id": 41741,
+                    "id_produto_interno": 41741,
+                    "ean_gtin": "7896018751002",
+                    "produto": "Produto Teste",
+                    "quantidade_vendida": 5,
+                    "valor_total_vendido_item": 1000,
+                    "cmv_estimado_item": 600,
+                    "lucro_bruto_item": 400,
+                    "margem_item": 0.4,
+                    "quantidade_cupons_com_item": 4,
+                    "valor_total_cupons_com_item": 1800,
+                }
+            ]
+
+        qa.execute_select = fake_execute_select
+
+        result = qa.answer_question(
+            "Qual o valor total dos cupons que contem esse item?",
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            None,
+            [{"role": "user", "content": "Poderia somar o valor total vendido do item 41741?"}],
+            None,
+        )
+
+        self.assertEqual(result["route"]["topic"], "cupons_com_item")
+        self.assertIn("R$ 1.800,00", result["answer"])
+        self.assertIn("total dos cupons", result["answer"])
+
 
 if __name__ == "__main__":
     unittest.main()

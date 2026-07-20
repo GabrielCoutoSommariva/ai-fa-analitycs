@@ -75,6 +75,11 @@ KPI_DEFINITIONS: dict[str, dict[str, str]] = {
         "formula": "receita liquida analisada - CMV estimado = lucro bruto estimado. Nao inclui DRE contabil completa.",
         "source": "analytics.mv_kpi_lucro_total_diario",
     },
+    "produto_especifico": {
+        "label": "Produto especifico",
+        "formula": "valor do item = sum(vlr_venda - vlr_devol); margem do item = sum(lucro_bruto_estimado) / sum(venda_liquida_item). O total dos cupons soma os cupons validos que contem o item.",
+        "source": "bronze.vendas_item, bronze.vendas_cab e analytics.dim_produto",
+    },
 }
 
 
@@ -207,6 +212,14 @@ def cnpj_filter(cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> 
         return "and loja_id in (select filtro_loja.loja_id from analytics.dim_loja filtro_loja where regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = %(cnpj)s)"
     if authorized_cnpjs is not None:
         return "and loja_id in (select filtro_loja.loja_id from analytics.dim_loja filtro_loja where regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = any(%(cnpjs)s))"
+    return ""
+
+
+def cnpj_filter_for_column(alias: str, column: str, cnpj: str | None, authorized_cnpjs: list[str] | None = None) -> str:
+    if normalize_cnpj(cnpj):
+        return f"and {alias}.{column} in (select filtro_loja.loja_id from analytics.dim_loja filtro_loja where regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = %(cnpj)s)"
+    if authorized_cnpjs is not None:
+        return f"and {alias}.{column} in (select filtro_loja.loja_id from analytics.dim_loja filtro_loja where regexp_replace(coalesce(filtro_loja.cnpj, ''), '\\D', '', 'g') = any(%(cnpjs)s))"
     return ""
 
 
@@ -713,6 +726,8 @@ def classify_topic(text: str | None) -> str | None:
     if not text:
         return None
     normalized = normalize_text(text)
+    if extract_product_code(normalized):
+        return "produto_especifico"
     operational_metric = resolve_operational_metric(normalized)
     if operational_metric:
         return operational_metric
@@ -1355,6 +1370,194 @@ def answer_network_comparison(
         "rows": rows,
         "route": {"status": "local_followup", "intent": "rede", "topic": comparison_topic},
         "params": serialize(query_params),
+        "sql": sql,
+    }
+
+
+def extract_product_code(text: str | None) -> str | None:
+    if not text:
+        return None
+    normalized = normalize_text(text)
+    explicit_patterns = [
+        r"\b(?:ean|gtin|codigo de barras|cod(?:igo)? de barras)\s*[:#-]?\s*(\d{6,14})\b",
+        r"\b(?:item|produto|prod|sku|codigo|cod)\s*[:#-]?\s*(\d{2,14})\b",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            return match.group(1)
+    if any(term in normalized for term in ["item", "produto", "sku", "ean", "gtin"]):
+        match = re.search(r"\b(\d{2,14})\b", normalized)
+        if match:
+            return match.group(1)
+    return None
+
+
+def product_code_from_history(history: list[dict[str, str]] | None) -> str | None:
+    for message in reversed(history or []):
+        code = extract_product_code(message.get("content"))
+        if code:
+            return code
+    return None
+
+
+def is_product_specific_question(question: str, history: list[dict[str, str]] | None = None) -> bool:
+    normalized = normalize_text(question)
+    if extract_product_code(normalized):
+        return any(term in normalized for term in ["item", "produto", "sku", "ean", "gtin", "venda", "vendas", "margem", "cupom", "cupons"])
+    if not product_code_from_history(history):
+        return False
+    return any(
+        term in normalized
+        for term in ["esse item", "desse item", "este item", "produto", "margem", "cupom", "cupons", "dessas vendas", "destas vendas"]
+    )
+
+
+def resolve_product_specific_intent(question: str) -> str:
+    normalized = normalize_text(question)
+    if "margem" in normalized or "lucro" in normalized or "cmv" in normalized:
+        return "margem_item"
+    if "cupom" in normalized or "cupons" in normalized or "cesta" in normalized:
+        return "cupons_com_item"
+    return "venda_item"
+
+
+def product_specific_answer(row: dict[str, Any], params: dict[str, Any], intent: str) -> str:
+    product_label = str(row.get("produto") or "item informado")
+    if int(float(row.get("produtos_encontrados") or 0)) > 1:
+        product_label = f"codigo {params.get('produto_codigo')}"
+    period = f"{params.get('data_inicio')} a {params.get('data_fim')}"
+    margem = float(row.get("margem_item") or 0) * 100
+
+    if intent == "cupons_com_item":
+        return (
+            f"No periodo de {period}, os cupons que continham o item {product_label} somaram "
+            f"{format_brl(row.get('valor_total_cupons_com_item'))}. Foram {format_int(row.get('quantidade_cupons_com_item'))} "
+            "cupons com esse item. Esse valor e o total dos cupons, nao apenas o valor do item."
+        )
+    if intent == "margem_item":
+        return (
+            f"No periodo de {period}, a margem estimada do item {product_label} foi {format_percent(margem)}. "
+            f"Base: venda liquida do item {format_brl(row.get('valor_total_vendido_item'))}, "
+            f"CMV estimado {format_brl(row.get('cmv_estimado_item'))} e lucro bruto estimado {format_brl(row.get('lucro_bruto_item'))}. "
+            "A regra definida aqui e margem do item, nao margem total dos cupons que continham o item."
+        )
+    return (
+        f"No periodo de {period}, o item {product_label} vendeu {format_brl(row.get('valor_total_vendido_item'))}. "
+        f"Quantidade vendida liquida: {format_int(row.get('quantidade_vendida'))}. "
+        f"Ele apareceu em {format_int(row.get('quantidade_cupons_com_item'))} cupons. "
+        "Usei vendas validas PA/DP e valor liquido do item, ja abatendo devolucoes."
+    )
+
+
+def answer_product_specific_sales(
+    question: str,
+    data_inicio: date | None,
+    data_fim: date | None,
+    cnpj: str | None,
+    history: list[dict[str, str]] | None = None,
+    authorized_cnpjs: list[str] | None = None,
+) -> dict[str, Any]:
+    params = parse_period(question, data_inicio, data_fim)
+    code = extract_product_code(question) or product_code_from_history(history)
+    if code:
+        params["produto_codigo"] = code
+    add_cnpj_params(params, cnpj, authorized_cnpjs)
+
+    if not params.get("data_inicio") or not params.get("data_fim"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Para analisar um item especifico, selecione um periodo.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": "produto_especifico"},
+            "params": serialize(params),
+        }
+    if not params.get("produto_codigo"):
+        return {
+            "status": "missing_slots",
+            "question": question,
+            "answer": "Informe o codigo do item, EAN/GTIN ou SKU para eu calcular as vendas do produto.",
+            "openai_enabled": has_openai_key(),
+            "rows": [],
+            "route": {"status": "consultative_matched", "intent": "produto_especifico"},
+            "params": serialize(params),
+        }
+
+    loja_filter = cnpj_filter_for_column("vc", "id_loja", cnpj, authorized_cnpjs)
+    sql = f"""
+    with produto_match as (
+      select
+        vi.id as venda_item_id,
+        vi.id_venda as venda_id,
+        vi.id_produto as produto_id,
+        p.id_produto_interno,
+        coalesce(vi.ean_gtin, p.gtin) as ean_gtin,
+        coalesce(p.nome, vi.nome_produto) as produto,
+        vi.qtd_venda - vi.qtd_devol as qtd_liquida,
+        vi.vlr_venda - vi.vlr_devol as venda_liquida_item,
+        (vi.qtd_venda - vi.qtd_devol) * coalesce(nullif(vi.custo_real, 0), nullif(vi.custo_medio, 0), nullif(vi.custo_ult, 0), nullif(p.custo_ult_entrada, 0), 0) as custo_total_base,
+        (vi.vlr_venda - vi.vlr_devol) - ((vi.qtd_venda - vi.qtd_devol) * coalesce(nullif(vi.custo_real, 0), nullif(vi.custo_medio, 0), nullif(vi.custo_ult, 0), nullif(p.custo_ult_entrada, 0), 0)) as lucro_bruto_estimado
+      from bronze.vendas_item vi
+      left join analytics.dim_produto p on p.produto_id = vi.id_produto
+      where vi.id_produto::text = %(produto_codigo)s
+         or p.id_produto_interno::text = %(produto_codigo)s
+         or regexp_replace(coalesce(vi.ean_gtin, ''), '\\D', '', 'g') = regexp_replace(%(produto_codigo)s, '\\D', '', 'g')
+         or regexp_replace(coalesce(p.gtin, ''), '\\D', '', 'g') = regexp_replace(%(produto_codigo)s, '\\D', '', 'g')
+    ), vendas_validas_com_item as (
+      select distinct
+        vc.id as venda_id,
+        vc.id_loja as loja_id,
+        vc.data,
+        vc.vlr_liquido - vc.vlr_devolucao as vlr_liquido_ajustado
+      from bronze.vendas_cab vc
+      join produto_match pm on pm.venda_id = vc.id
+      where vc.data between %(data_inicio)s and %(data_fim)s
+        and vc.st_caixa in ('PA', 'DP')
+        {loja_filter}
+    ), item_agregado as (
+      select
+        count(distinct pm.produto_id) as produtos_encontrados,
+        max(pm.produto_id) as produto_id,
+        max(pm.id_produto_interno) as id_produto_interno,
+        max(pm.ean_gtin) as ean_gtin,
+        max(pm.produto) as produto,
+        coalesce(sum(pm.qtd_liquida), 0) as quantidade_vendida,
+        coalesce(sum(pm.venda_liquida_item), 0) as valor_total_vendido_item,
+        coalesce(sum(pm.custo_total_base), 0) as cmv_estimado_item,
+        coalesce(sum(pm.lucro_bruto_estimado), 0) as lucro_bruto_item,
+        case
+          when sum(pm.venda_liquida_item) = 0 then null
+          else sum(pm.lucro_bruto_estimado) / sum(pm.venda_liquida_item)
+        end as margem_item
+      from produto_match pm
+      join vendas_validas_com_item vv on vv.venda_id = pm.venda_id
+    ), cupons_agregado as (
+      select
+        count(*) as quantidade_cupons_com_item,
+        coalesce(sum(vlr_liquido_ajustado), 0) as valor_total_cupons_com_item
+      from vendas_validas_com_item
+    )
+    select *
+    from item_agregado ia
+    cross join cupons_agregado ca
+    """
+    rows = [serialize(row) for row in execute_select(sql, params)]
+    row = rows[0] if rows else {}
+    if not row or int(float(row.get("quantidade_cupons_com_item") or 0)) == 0:
+        answer = f"Nao encontrei vendas validas PA/DP para o item {params['produto_codigo']} no periodo selecionado."
+    else:
+        answer = product_specific_answer(row, params, resolve_product_specific_intent(question))
+
+    return {
+        "status": "answered",
+        "question": question,
+        "answer": answer,
+        "openai_enabled": has_openai_key(),
+        "rows": rows,
+        "route": {"status": "consultative_matched", "intent": "produto_especifico", "topic": resolve_product_specific_intent(question)},
+        "params": serialize(params),
         "sql": sql,
     }
 
@@ -2314,6 +2517,9 @@ def answer_question(
     operational_metric = resolve_operational_metric(question)
     if operational_metric:
         return answer_operational_kpi(question, data_inicio, data_fim, cnpj, authorized_cnpjs, operational_metric)
+
+    if is_product_specific_question(question, history):
+        return answer_product_specific_sales(question, data_inicio, data_fim, cnpj, history, authorized_cnpjs)
 
     if is_daily_revenue_series(question):
         return answer_daily_revenue_series(question, data_inicio, data_fim, cnpj, authorized_cnpjs)
