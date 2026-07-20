@@ -241,6 +241,46 @@ class AiLocalAnswersTest(unittest.TestCase):
         self.assertIn("40,00%", result["answer"])
         self.assertIn("margem do item", result["answer"])
 
+    def test_product_specific_followup_ignores_assistant_years_in_history(self):
+        def fake_execute_select(sql, params):
+            self.assertEqual(params["produto_codigo"], "7896018751002")
+            return [
+                {
+                    "produtos_encontrados": 1,
+                    "produto_id": 41741,
+                    "id_produto_interno": 41741,
+                    "ean_gtin": "7896018751002",
+                    "produto": "Produto Teste",
+                    "quantidade_vendida": 5,
+                    "valor_total_vendido_item": 1000,
+                    "cmv_estimado_item": 600,
+                    "lucro_bruto_item": 400,
+                    "margem_item": 0.4,
+                    "quantidade_cupons_com_item": 4,
+                    "valor_total_cupons_com_item": 1800,
+                }
+            ]
+
+        qa.execute_select = fake_execute_select
+
+        result = qa.answer_question(
+            "Qual a margem obtida nessas vendas?",
+            date(2026, 4, 1),
+            date(2026, 7, 20),
+            None,
+            [
+                {"role": "user", "content": "Qual o valor total dos cupons que contem esse item? EAN 7896018751002"},
+                {
+                    "role": "assistant",
+                    "content": "No periodo de 2026-04-01 a 2026-07-20, os cupons que continham o item Produto Teste somaram R$ 1.800,00.",
+                },
+            ],
+            None,
+        )
+
+        self.assertEqual(result["route"]["topic"], "margem_item")
+        self.assertIn("40,00%", result["answer"])
+
     def test_product_specific_coupon_followup_uses_coupon_total(self):
         def fake_execute_select(sql, params):
             self.assertIn("vendas_validas_com_item", sql)

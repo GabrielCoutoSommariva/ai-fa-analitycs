@@ -1395,6 +1395,8 @@ def extract_product_code(text: str | None) -> str | None:
 
 def product_code_from_history(history: list[dict[str, str]] | None) -> str | None:
     for message in reversed(history or []):
+        if message.get("role") != "user":
+            continue
         code = extract_product_code(message.get("content"))
         if code:
             return code
